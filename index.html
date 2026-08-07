@@ -32,7 +32,7 @@
 
   *{box-sizing:border-box; margin:0; padding:0;}
 
-  html,body{height:100%;}
+  html,body{height:100%; overflow:hidden;}
 
   body{
     font-family:'Space Grotesk', system-ui, sans-serif;
@@ -90,6 +90,10 @@
   #screen-entry{
     align-items:center; justify-content:center;
     padding:32px 20px;
+    height:100vh; max-height:100vh; overflow-y:auto;
+  }
+  @supports (height: 100dvh){
+    #screen-entry{ height:100dvh; max-height:100dvh; }
   }
 
   .entry-card-outer{ width:100%; max-width:460px; }
@@ -974,6 +978,7 @@
         var remoteStream = state.remoteStreams[id];
         var opts = { id:id, name:p.name, micOff:!p.micOn };
         var temVideoAtivo = remoteStream && remoteStream.getVideoTracks().length && (p.camOn || p.telaCompartilhada);
+        console.log('[DIAG] renderGrid ' + id + ': camOn=' + p.camOn + ' telaCompartilhada=' + p.telaCompartilhada + ' remoteStream?=' + !!remoteStream + ' qtdVideoTracks=' + (remoteStream ? remoteStream.getVideoTracks().length : 0) + ' => temVideoAtivo=' + !!temVideoAtivo);
         if(temVideoAtivo){
           opts.videoStream = remoteStream;
           if(p.telaCompartilhada){ opts.sharing = true; opts.featured = true; }
@@ -1089,6 +1094,7 @@
   }
 
   function onEstadoUpdate(playersDict){
+    console.log('[DIAG] estado recebido, meuId=' + state.myId, JSON.parse(JSON.stringify(playersDict)));
     var prevIds = Object.keys(state.players);
     var newIds = Object.keys(playersDict);
     state.players = playersDict;
@@ -1111,6 +1117,7 @@
   }
 
   function createPeerConnection(peerId, initiator){
+    console.log('[DIAG] criando peer connection com ' + peerId + ' | initiator=' + initiator + ' | meu modo=' + state.mode + ' | isScreenSharing=' + state.isScreenSharing);
     var pc = new RTCPeerConnection(ICE_SERVERS);
     state.peerConnections[peerId] = pc;
 
@@ -1127,8 +1134,12 @@
     state.videoSenders[peerId] = videoTransceiver.sender;
     if(state.mode === 'camera' && state.localStream && state.localStream.getVideoTracks().length){
       videoTransceiver.sender.replaceTrack(state.localStream.getVideoTracks()[0]);
+      console.log('[DIAG] ' + peerId + ': anexei minha câmera de cara no transceiver');
     } else if(state.isScreenSharing && state.screenStream){
       videoTransceiver.sender.replaceTrack(state.screenStream.getVideoTracks()[0]);
+      console.log('[DIAG] ' + peerId + ': anexei minha TELA de cara no transceiver');
+    } else {
+      console.log('[DIAG] ' + peerId + ': transceiver de vídeo criado SEM nenhuma track pra enviar ainda');
     }
 
     pc.onicecandidate = function(e){
@@ -1136,9 +1147,14 @@
     };
 
     pc.ontrack = function(e){
+      console.log('[DIAG] ontrack de ' + peerId + ' | kind=' + e.track.kind + ' | tracks no stream agora=' + e.streams[0].getTracks().map(function(t){return t.kind;}).join(','));
       state.remoteStreams[peerId] = e.streams[0];
       setupAudioMeter(peerId, e.streams[0]);
       renderGrid();
+    };
+
+    pc.oniceconnectionstatechange = function(){
+      console.log('[DIAG] ' + peerId + ': iceConnectionState=' + pc.iceConnectionState);
     };
 
     if(initiator){
@@ -1255,8 +1271,14 @@
       state.isScreenSharing = true;
 
       var screenTrack = screenStream.getVideoTracks()[0];
-      Object.keys(state.videoSenders).forEach(function(id){
-        state.videoSenders[id].replaceTrack(screenTrack);
+      var idsComSender = Object.keys(state.videoSenders);
+      console.log('[DIAG] iniciando compartilhamento de tela. peers com videoSender registrado: ' + JSON.stringify(idsComSender));
+      idsComSender.forEach(function(id){
+        state.videoSenders[id].replaceTrack(screenTrack).then(function(){
+          console.log('[DIAG] replaceTrack OK para ' + id);
+        }).catch(function(err){
+          console.log('[DIAG] replaceTrack FALHOU para ' + id + ': ' + err);
+        });
       });
 
       screenTrack.onended = function(){ pararCompartilhamentoTela(); };
