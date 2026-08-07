@@ -1018,7 +1018,6 @@
         var remoteStream = state.remoteStreams[id];
         var opts = { id:id, name:p.name, micOff:!p.micOn };
         var temVideoAtivo = remoteStream && remoteStream.getVideoTracks().length && (p.camOn || p.telaCompartilhada);
-        console.log('[DIAG] renderGrid ' + id + ' modo=' + p.mode + ' camOn=' + p.camOn + ' telaCompartilhada=' + p.telaCompartilhada + ' remoteStream?=' + !!remoteStream + ' videoTracks=' + (remoteStream ? remoteStream.getVideoTracks().length : 'n/a') + ' -> mostra vídeo? ' + !!temVideoAtivo);
         if(temVideoAtivo){
           opts.videoStream = remoteStream;
           if(p.telaCompartilhada){ opts.sharing = true; opts.featured = true; }
@@ -1198,20 +1197,15 @@
     // (modo avatar/nenhum): adicionar uma track nova depois exige renegociar.
     var primeiraNegociacaoIgnorada = false;
     pc.onnegotiationneeded = function(){
-      console.log('[DIAG] negotiationneeded disparado pra ' + peerId + ' | primeiraJaIgnorada=' + primeiraNegociacaoIgnorada + ' | signalingState=' + pc.signalingState);
       if(!primeiraNegociacaoIgnorada){
         primeiraNegociacaoIgnorada = true;
-        console.log('[DIAG] ignorando essa primeira (é a da configuração inicial)');
         return; // a primeira negociação já é tratada explicitamente abaixo (ou pela resposta)
       }
-      console.log('[DIAG] renegociando de verdade com ' + peerId);
       pc.createOffer().then(function(offer){
         return pc.setLocalDescription(offer);
       }).then(function(){
         state.socket.emit('webrtc-offer', { to:peerId, offer:pc.localDescription });
-        console.log('[DIAG] oferta de renegociação enviada pra ' + peerId);
       }).catch(function(err){
-        console.log('[DIAG] renegociação FALHOU pra ' + peerId + ': ' + err);
       });
     };
 
@@ -1228,7 +1222,6 @@
   }
 
   function onWebrtcOffer(data){
-    console.log('[DIAG] oferta recebida de ' + data.from);
     var pc = state.peerConnections[data.from] || createPeerConnection(data.from, false);
     pc.setRemoteDescription(new RTCSessionDescription(data.offer)).then(function(){
       pc.getTransceivers().forEach(function(t){ if(t.direction !== 'sendrecv') t.direction = 'sendrecv'; });
@@ -1237,18 +1230,12 @@
       return pc.setLocalDescription(answer);
     }).then(function(){
       state.socket.emit('webrtc-answer', { to:data.from, answer:pc.localDescription });
-      console.log('[DIAG] resposta enviada pra ' + data.from + ' | transceivers=' + JSON.stringify(pc.getTransceivers().map(function(t){ return { kind:(t.receiver&&t.receiver.track?t.receiver.track.kind:'?'), direction:t.direction }; })));
-    }).catch(function(err){
-      console.log('[DIAG] erro processando oferta de ' + data.from + ': ' + err);
-    });
+    }).catch(function(){});
   }
 
   function onWebrtcAnswer(data){
-    console.log('[DIAG] resposta recebida de ' + data.from);
     var pc = state.peerConnections[data.from];
-    if(pc) pc.setRemoteDescription(new RTCSessionDescription(data.answer)).catch(function(err){
-      console.log('[DIAG] erro aplicando resposta de ' + data.from + ': ' + err);
-    });
+    if(pc) pc.setRemoteDescription(new RTCSessionDescription(data.answer)).catch(function(){});
   }
 
   function onWebrtcIce(data){
@@ -1327,26 +1314,29 @@
     renderGrid();
   });
 
+  var pedidoTelaEmAndamento = false;
+
   function iniciarCompartilhamentoTela(){
     if(!navigator.mediaDevices || !navigator.mediaDevices.getDisplayMedia){
       addSystemMessage('Seu navegador não suporta compartilhamento de tela.');
       return;
     }
+    if(state.isScreenSharing || pedidoTelaEmAndamento) return; // já compartilhando, ou pedido já em andamento
+    pedidoTelaEmAndamento = true;
+    el.btnScreenshare.disabled = true;
+
     navigator.mediaDevices.getDisplayMedia({ video:true, audio:false }).then(function(screenStream){
       state.screenStream = screenStream;
       state.isScreenSharing = true;
 
       var screenTrack = screenStream.getVideoTracks()[0];
       var ids = Object.keys(state.peerConnections);
-      console.log('[DIAG] compartilhamento iniciado. conexões: ' + JSON.stringify(ids));
       ids.forEach(function(id){
         var pc = state.peerConnections[id];
         var sender = pc.getSenders().find(function(s){ return s.track && s.track.kind === 'video'; });
         if(sender){
-          console.log('[DIAG] ' + id + ': já tinha sender de vídeo, usando replaceTrack');
           sender.replaceTrack(screenTrack);
         } else {
-          console.log('[DIAG] ' + id + ': sem sender de vídeo, usando addTrack (vai renegociar)');
           pc.addTrack(screenTrack, screenStream);
         }
       });
@@ -1359,6 +1349,9 @@
       renderGrid();
     }).catch(function(){
       // usuário cancelou o seletor do navegador — não faz nada
+    }).finally(function(){
+      pedidoTelaEmAndamento = false;
+      el.btnScreenshare.disabled = false;
     });
   }
 
