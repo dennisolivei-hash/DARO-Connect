@@ -904,8 +904,14 @@
       return;
     }
 
-    var socket = io(state.serverUrl, { transports:['websocket','polling'], timeout:6000 });
+    var socket = io(state.serverUrl, {
+      transports:['websocket','polling'],
+      timeout:6000,
+      reconnectionDelay:1000,
+      reconnectionDelayMax:5000
+    });
     state.socket = socket;
+    var jaEntrouUmaVez = false;
 
     socket.on('connect', function(){
       state.myId = socket.id;
@@ -915,7 +921,12 @@
         modo:state.mode,
         avatarDataUrl: state.mode === 'avatar' ? state.avatarDataUrl : null
       });
-      addSystemMessage('Você entrou na sala.');
+      if(!jaEntrouUmaVez){
+        jaEntrouUmaVez = true;
+        addSystemMessage('Você entrou na sala.');
+      } else {
+        addSystemMessage('Reconectado.');
+      }
     });
 
     socket.on('connect_error', function(){
@@ -927,7 +938,7 @@
     });
 
     socket.on('disconnect', function(){
-      addSystemMessage('Conexão com o servidor perdida.');
+      if(jaEntrouUmaVez) addSystemMessage('Conexão instável — reconectando…');
     });
 
     socket.on('estado', onEstadoUpdate);
