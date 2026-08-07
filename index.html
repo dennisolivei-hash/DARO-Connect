@@ -905,7 +905,7 @@
     }
 
     var socket = io(state.serverUrl, {
-      transports:['websocket','polling'],
+      transports:['polling','websocket'],
       timeout:6000,
       reconnectionDelay:1000,
       reconnectionDelayMax:5000
