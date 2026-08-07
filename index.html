@@ -212,7 +212,10 @@
   }
 
   /* ================= ROOM SCREEN ================= */
-  #screen-room{ flex-direction:column; width:100%; }
+  #screen-room{ flex-direction:column; width:100%; height:100vh; max-height:100vh; overflow:hidden; }
+  @supports (height: 100dvh){
+    #screen-room{ height:100dvh; max-height:100dvh; }
+  }
 
   .room-header{
     display:flex; align-items:center; justify-content:space-between;
@@ -246,7 +249,7 @@
     display:flex; align-items:center; justify-content:center; padding:0 3px;
   }
 
-  .room-body{ flex:1; display:flex; overflow:hidden; }
+  .room-body{ flex:1; display:flex; overflow:hidden; min-height:0; }
 
   .video-area{
     flex:1; padding:18px; display:flex; align-items:center; justify-content:center; overflow:auto;
@@ -256,6 +259,9 @@
     grid-template-columns:repeat(auto-fit, minmax(240px,1fr));
     align-content:center;
   }
+  .video-grid.spotlight-mode{
+    grid-template-columns:repeat(auto-fit, minmax(150px,1fr));
+  }
 
   .tile{
     position:relative; background:var(--navy-800); overflow:hidden;
@@ -264,7 +270,14 @@
     border:1px solid var(--navy-600);
     display:flex; align-items:center; justify-content:center;
   }
+  .tile.featured{
+    grid-column:1 / -1;
+    aspect-ratio:16/9;
+    max-height:62vh;
+  }
   .tile video{ width:100%; height:100%; object-fit:cover; transform:scaleX(-1); }
+  .tile.sharing{ background:#000; }
+  .tile.sharing video{ transform:none; object-fit:contain; }
   .tile .tile-avatar{
     width:76px; height:76px; border-radius:50%;
     background:linear-gradient(135deg, var(--cyan-500), var(--navy-700));
@@ -306,7 +319,8 @@
   /* ---------- chat panel ---------- */
   .chat-panel{
     width:340px; min-width:340px; background:var(--navy-900); border-left:1px solid var(--navy-700);
-    display:flex; flex-direction:column; transform:translateX(0); transition:margin .2s;
+    display:flex; flex-direction:column; overflow:hidden; min-height:0;
+    transform:translateX(0); transition:margin .2s;
   }
   .chat-panel.hidden{ display:none; }
 
@@ -618,6 +632,7 @@
     players:{},          // { id: {name, mode, avatarDataUrl, micOn, camOn, telaCompartilhada} }, vem do servidor
     peerConnections:{},  // id -> RTCPeerConnection
     remoteStreams:{},    // id -> MediaStream
+    videoSenders:{},     // id -> RTCRtpSender (transceiver de vídeo reservado por conexão)
     audioMeters:{}       // id -> { ctx, raf }
   };
 
@@ -876,7 +891,7 @@
   // ---------- room ----------
   function buildTile(opts){
     var tile = document.createElement('div');
-    tile.className = 'tile' + (opts.self ? ' self' : '');
+    tile.className = 'tile' + (opts.self ? ' self' : '') + (opts.featured ? ' featured' : '') + (opts.sharing ? ' sharing' : '');
     tile.dataset.tileId = opts.id;
 
     var brackets = document.createElement('div');
@@ -929,11 +944,14 @@
 
   function renderGrid(){
     el.videoGrid.innerHTML = '';
+    var tilesDestaque = [];
+    var tilesNormais = [];
 
     var selfOpts = { self:true, id:'self', name:state.name || 'Você', micOff:!state.micOn };
     if(state.isScreenSharing && state.screenStream){
       selfOpts.videoStream = state.screenStream;
       selfOpts.sharing = true;
+      selfOpts.featured = true;
     } else if(state.mode === 'camera' && state.camOn && state.localStream && state.localStream.getVideoTracks().length){
       selfOpts.videoStream = state.localStream;
     } else if(state.mode === 'avatar' && state.avatarDataUrl){
@@ -941,38 +959,41 @@
     } else {
       selfOpts.initials = initials(state.name || '?');
     }
-    el.videoGrid.appendChild(buildTile(selfOpts));
+    (selfOpts.featured ? tilesDestaque : tilesNormais).push(selfOpts);
 
     if(state.demoMode){
       MOCK_PEOPLE.forEach(function(p, i){
-        el.videoGrid.appendChild(buildTile({ id:'mock'+i, name:p.name, initials:p.initials, micOff:false }));
+        tilesNormais.push({ id:'mock'+i, name:p.name, initials:p.initials, micOff:false });
       });
       el.participantCount.textContent = (MOCK_PEOPLE.length + 1) + ' participantes (demonstração)';
-      return;
+    } else {
+      var ids = Object.keys(state.players);
+      ids.forEach(function(id){
+        if(id === state.myId) return;
+        var p = state.players[id];
+        var remoteStream = state.remoteStreams[id];
+        var opts = { id:id, name:p.name, micOff:!p.micOn };
+        var temVideoAtivo = remoteStream && remoteStream.getVideoTracks().length && (p.camOn || p.telaCompartilhada);
+        if(temVideoAtivo){
+          opts.videoStream = remoteStream;
+          if(p.telaCompartilhada){ opts.sharing = true; opts.featured = true; }
+        } else if(p.avatarDataUrl){
+          opts.imgSrc = p.avatarDataUrl;
+          opts.audioStream = remoteStream;
+        } else {
+          opts.initials = initials(p.name || '?');
+          opts.audioStream = remoteStream;
+        }
+        (opts.featured ? tilesDestaque : tilesNormais).push(opts);
+      });
+
+      var total = ids.length || 1;
+      el.participantCount.textContent = total + (total === 1 ? ' participante' : ' participantes');
     }
 
-    var ids = Object.keys(state.players);
-    ids.forEach(function(id){
-      if(id === state.myId) return;
-      var p = state.players[id];
-      var remoteStream = state.remoteStreams[id];
-      var opts = { id:id, name:p.name, micOff:!p.micOn };
-      var temVideoAtivo = remoteStream && remoteStream.getVideoTracks().length && (p.camOn || p.telaCompartilhada);
-      if(temVideoAtivo){
-        opts.videoStream = remoteStream;
-        opts.sharing = !!p.telaCompartilhada;
-      } else if(p.avatarDataUrl){
-        opts.imgSrc = p.avatarDataUrl;
-        opts.audioStream = remoteStream;
-      } else {
-        opts.initials = initials(p.name || '?');
-        opts.audioStream = remoteStream;
-      }
-      el.videoGrid.appendChild(buildTile(opts));
-    });
-
-    var total = ids.length || 1;
-    el.participantCount.textContent = total + (total === 1 ? ' participante' : ' participantes');
+    el.videoGrid.classList.toggle('spotlight-mode', tilesDestaque.length > 0);
+    tilesDestaque.forEach(function(o){ el.videoGrid.appendChild(buildTile(o)); });
+    tilesNormais.forEach(function(o){ el.videoGrid.appendChild(buildTile(o)); });
   }
 
   function proceedToRoom(){
@@ -1093,17 +1114,21 @@
     var pc = new RTCPeerConnection(ICE_SERVERS);
     state.peerConnections[peerId] = pc;
 
-    var temVideoLocal = false;
     if(state.localStream){
-      state.localStream.getTracks().forEach(function(track){
+      state.localStream.getAudioTracks().forEach(function(track){
         pc.addTrack(track, state.localStream);
-        if(track.kind === 'video') temVideoLocal = true;
       });
     }
-    if(!temVideoLocal){
-      // mesmo sem enviar vídeo (modo avatar, ou câmera indisponível), garante espaço
-      // na negociação pra RECEBER o vídeo dos outros participantes normalmente
-      try{ pc.addTransceiver('video', { direction:'recvonly' }); }catch(e){}
+
+    // vídeo sempre reserva um transceiver 'sendrecv' desde o início, mesmo sem
+    // nenhuma track pra enviar agora — assim, ligar a câmera ou compartilhar tela
+    // depois é só um replaceTrack(), sem precisar renegociar a conexão.
+    var videoTransceiver = pc.addTransceiver('video', { direction:'sendrecv' });
+    state.videoSenders[peerId] = videoTransceiver.sender;
+    if(state.mode === 'camera' && state.localStream && state.localStream.getVideoTracks().length){
+      videoTransceiver.sender.replaceTrack(state.localStream.getVideoTracks()[0]);
+    } else if(state.isScreenSharing && state.screenStream){
+      videoTransceiver.sender.replaceTrack(state.screenStream.getVideoTracks()[0]);
     }
 
     pc.onicecandidate = function(e){
@@ -1114,19 +1139,6 @@
       state.remoteStreams[peerId] = e.streams[0];
       setupAudioMeter(peerId, e.streams[0]);
       renderGrid();
-    };
-
-    var primeiraNegociacaoIgnorada = false;
-    pc.onnegotiationneeded = function(){
-      if(!primeiraNegociacaoIgnorada){
-        primeiraNegociacaoIgnorada = true;
-        return; // a primeira negociação já é tratada explicitamente logo abaixo
-      }
-      pc.createOffer().then(function(offer){
-        return pc.setLocalDescription(offer);
-      }).then(function(){
-        state.socket.emit('webrtc-offer', { to:peerId, offer:pc.localDescription });
-      }).catch(function(){});
     };
 
     if(initiator){
@@ -1167,6 +1179,7 @@
     var pc = state.peerConnections[id];
     if(pc){ pc.close(); delete state.peerConnections[id]; }
     delete state.remoteStreams[id];
+    delete state.videoSenders[id];
     teardownAudioMeter(id);
   }
 
@@ -1242,14 +1255,8 @@
       state.isScreenSharing = true;
 
       var screenTrack = screenStream.getVideoTracks()[0];
-      Object.keys(state.peerConnections).forEach(function(id){
-        var pc = state.peerConnections[id];
-        var sender = pc.getSenders().find(function(s){ return s.track && s.track.kind === 'video'; });
-        if(sender){
-          sender.replaceTrack(screenTrack);
-        } else {
-          pc.addTrack(screenTrack, screenStream); // dispara onnegotiationneeded
-        }
+      Object.keys(state.videoSenders).forEach(function(id){
+        state.videoSenders[id].replaceTrack(screenTrack);
       });
 
       screenTrack.onended = function(){ pararCompartilhamentoTela(); };
@@ -1273,10 +1280,8 @@
     }
 
     var novaTrackVideo = (state.mode === 'camera' && state.localStream) ? state.localStream.getVideoTracks()[0] : null;
-    Object.keys(state.peerConnections).forEach(function(id){
-      var pc = state.peerConnections[id];
-      var sender = pc.getSenders().find(function(s){ return s.track && s.track.kind === 'video'; });
-      if(sender) sender.replaceTrack(novaTrackVideo || null);
+    Object.keys(state.videoSenders).forEach(function(id){
+      state.videoSenders[id].replaceTrack(novaTrackVideo || null);
     });
 
     el.btnScreenshare.classList.remove('on');
