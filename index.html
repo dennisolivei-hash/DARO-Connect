@@ -978,7 +978,6 @@
         var remoteStream = state.remoteStreams[id];
         var opts = { id:id, name:p.name, micOff:!p.micOn };
         var temVideoAtivo = remoteStream && remoteStream.getVideoTracks().length && (p.camOn || p.telaCompartilhada);
-        console.log('[DIAG] renderGrid ' + id + ': camOn=' + p.camOn + ' telaCompartilhada=' + p.telaCompartilhada + ' remoteStream?=' + !!remoteStream + ' qtdVideoTracks=' + (remoteStream ? remoteStream.getVideoTracks().length : 0) + ' => temVideoAtivo=' + !!temVideoAtivo);
         if(temVideoAtivo){
           opts.videoStream = remoteStream;
           if(p.telaCompartilhada){ opts.sharing = true; opts.featured = true; }
@@ -1094,7 +1093,6 @@
   }
 
   function onEstadoUpdate(playersDict){
-    console.log('[DIAG] estado recebido, meuId=' + state.myId, JSON.parse(JSON.stringify(playersDict)));
     var prevIds = Object.keys(state.players);
     var newIds = Object.keys(playersDict);
     state.players = playersDict;
@@ -1117,7 +1115,6 @@
   }
 
   function createPeerConnection(peerId, initiator){
-    console.log('[DIAG] criando peer connection com ' + peerId + ' | initiator=' + initiator + ' | meu modo=' + state.mode + ' | isScreenSharing=' + state.isScreenSharing);
     var pc = new RTCPeerConnection(ICE_SERVERS);
     state.peerConnections[peerId] = pc;
 
@@ -1130,16 +1127,13 @@
     // vídeo sempre reserva um transceiver 'sendrecv' desde o início, mesmo sem
     // nenhuma track pra enviar agora — assim, ligar a câmera ou compartilhar tela
     // depois é só um replaceTrack(), sem precisar renegociar a conexão.
-    var videoTransceiver = pc.addTransceiver('video', { direction:'sendrecv' });
+    var streamsIniciais = state.localStream ? [state.localStream] : [];
+    var videoTransceiver = pc.addTransceiver('video', { direction:'sendrecv', streams:streamsIniciais });
     state.videoSenders[peerId] = videoTransceiver.sender;
     if(state.mode === 'camera' && state.localStream && state.localStream.getVideoTracks().length){
       videoTransceiver.sender.replaceTrack(state.localStream.getVideoTracks()[0]);
-      console.log('[DIAG] ' + peerId + ': anexei minha câmera de cara no transceiver');
     } else if(state.isScreenSharing && state.screenStream){
       videoTransceiver.sender.replaceTrack(state.screenStream.getVideoTracks()[0]);
-      console.log('[DIAG] ' + peerId + ': anexei minha TELA de cara no transceiver');
-    } else {
-      console.log('[DIAG] ' + peerId + ': transceiver de vídeo criado SEM nenhuma track pra enviar ainda');
     }
 
     pc.onicecandidate = function(e){
@@ -1147,14 +1141,15 @@
     };
 
     pc.ontrack = function(e){
-      console.log('[DIAG] ontrack de ' + peerId + ' | kind=' + e.track.kind + ' | tracks no stream agora=' + e.streams[0].getTracks().map(function(t){return t.kind;}).join(','));
-      state.remoteStreams[peerId] = e.streams[0];
-      setupAudioMeter(peerId, e.streams[0]);
+      if(!state.remoteStreams[peerId]){
+        state.remoteStreams[peerId] = new MediaStream();
+      }
+      var streamDoPeer = state.remoteStreams[peerId];
+      if(streamDoPeer.getTracks().indexOf(e.track) === -1){
+        streamDoPeer.addTrack(e.track);
+      }
+      setupAudioMeter(peerId, streamDoPeer);
       renderGrid();
-    };
-
-    pc.oniceconnectionstatechange = function(){
-      console.log('[DIAG] ' + peerId + ': iceConnectionState=' + pc.iceConnectionState);
     };
 
     if(initiator){
@@ -1271,14 +1266,8 @@
       state.isScreenSharing = true;
 
       var screenTrack = screenStream.getVideoTracks()[0];
-      var idsComSender = Object.keys(state.videoSenders);
-      console.log('[DIAG] iniciando compartilhamento de tela. peers com videoSender registrado: ' + JSON.stringify(idsComSender));
-      idsComSender.forEach(function(id){
-        state.videoSenders[id].replaceTrack(screenTrack).then(function(){
-          console.log('[DIAG] replaceTrack OK para ' + id);
-        }).catch(function(err){
-          console.log('[DIAG] replaceTrack FALHOU para ' + id + ': ' + err);
-        });
+      Object.keys(state.videoSenders).forEach(function(id){
+        state.videoSenders[id].replaceTrack(screenTrack);
       });
 
       screenTrack.onended = function(){ pararCompartilhamentoTela(); };
