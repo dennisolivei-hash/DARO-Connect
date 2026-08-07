@@ -457,6 +457,17 @@
 <script>
 (function(){
   "use strict";
+
+  // chegou aqui com ?sala=xxx (link de uma sala específica que alguém compartilhou)?
+  // repassa esse código pros botões de entrar, senão eles abririam uma sala nova.
+  var params = new URLSearchParams(window.location.search);
+  var salaId = params.get('sala');
+  if(salaId && /^[a-z0-9-]{3,40}$/i.test(salaId)){
+    document.querySelectorAll('a[href="sala.html"]').forEach(function(a){
+      a.setAttribute('href', 'sala.html?sala=' + encodeURIComponent(salaId));
+    });
+  }
+
   var campo = document.getElementById('cube-field');
   if(!campo) return;
   if(window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches) return;

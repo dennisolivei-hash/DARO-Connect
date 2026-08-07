@@ -1420,7 +1420,9 @@
     }
   }
   el.btnCopyLink.addEventListener('click', function(){
-    var link = window.location.href;
+    // manda pra landing (index.html) com o código da sala, em vez de direto pra sala.html —
+    // assim quem recebe o link vê a página inicial antes de entrar.
+    var link = window.location.origin + '/?sala=' + encodeURIComponent(state.salaId);
     var confirmar = function(){
       var label = el.btnCopyLink.querySelector('.copy-link-label');
       var textoOriginal = label.textContent;
