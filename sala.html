@@ -1018,6 +1018,7 @@
         var remoteStream = state.remoteStreams[id];
         var opts = { id:id, name:p.name, micOff:!p.micOn };
         var temVideoAtivo = remoteStream && remoteStream.getVideoTracks().length && (p.camOn || p.telaCompartilhada);
+        console.log('[DIAG] renderGrid ' + id + ' modo=' + p.mode + ' camOn=' + p.camOn + ' telaCompartilhada=' + p.telaCompartilhada + ' remoteStream?=' + !!remoteStream + ' videoTracks=' + (remoteStream ? remoteStream.getVideoTracks().length : 'n/a') + ' -> mostra vídeo? ' + !!temVideoAtivo);
         if(temVideoAtivo){
           opts.videoStream = remoteStream;
           if(p.telaCompartilhada){ opts.sharing = true; opts.featured = true; }
@@ -1137,6 +1138,7 @@
   }
 
   function onEstadoUpdate(playersDict){
+    console.log('[DIAG] estado recebido | minhaSala=' + state.salaId + ' | meuId=' + state.myId + ' | players=' + JSON.stringify(playersDict));
     var prevIds = Object.keys(state.players);
     var newIds = Object.keys(playersDict);
     state.players = playersDict;
@@ -1182,6 +1184,7 @@
     };
 
     pc.ontrack = function(e){
+      console.log('[DIAG] ontrack de ' + peerId + ' kind=' + e.track.kind + ' readyState=' + e.track.readyState);
       if(!state.remoteStreams[peerId]){
         state.remoteStreams[peerId] = new MediaStream();
       }
@@ -1197,6 +1200,7 @@
     // (modo avatar/nenhum): adicionar uma track nova depois exige renegociar.
     var primeiraNegociacaoIgnorada = false;
     pc.onnegotiationneeded = function(){
+      console.log('[DIAG] negotiationneeded pra ' + peerId + ' | primeiraJaIgnorada=' + primeiraNegociacaoIgnorada);
       if(!primeiraNegociacaoIgnorada){
         primeiraNegociacaoIgnorada = true;
         return; // a primeira negociação já é tratada explicitamente abaixo (ou pela resposta)
@@ -1205,7 +1209,9 @@
         return pc.setLocalDescription(offer);
       }).then(function(){
         state.socket.emit('webrtc-offer', { to:peerId, offer:pc.localDescription });
+        console.log('[DIAG] renegociação enviada pra ' + peerId);
       }).catch(function(err){
+        console.log('[DIAG] renegociação falhou pra ' + peerId + ': ' + err);
       });
     };
 
