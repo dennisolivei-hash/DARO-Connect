@@ -130,21 +130,29 @@
   .text-input::placeholder{ color:var(--text-dim); }
 
   .mode-toggle{
-    display:flex; gap:10px; width:100%; margin-top:4px;
+    display:flex; gap:8px; width:100%; margin-top:4px;
   }
   .mode-btn{
     flex:1; cursor:pointer; user-select:none;
     background:var(--navy-900); border:1px solid var(--navy-600);
-    color:var(--text-mid); font-family:inherit; font-size:13.5px; font-weight:600;
-    padding:10px 8px; text-align:center;
+    color:var(--text-mid); font-family:inherit; font-size:12px; font-weight:600;
+    padding:9px 4px; text-align:center;
     clip-path:polygon(8px 0,100% 0,100% calc(100% - 8px),calc(100% - 8px) 100%,0 100%,0 8px);
-    display:flex; align-items:center; justify-content:center; gap:7px;
+    display:flex; align-items:center; justify-content:center; gap:5px;
     transition:all .15s;
   }
-  .mode-btn svg{ width:16px; height:16px; opacity:.8; }
+  .mode-btn svg{ width:14px; height:14px; opacity:.8; flex-shrink:0; }
   .mode-btn.active{
     background:rgba(30,200,232,0.12); border-color:var(--cyan-500); color:var(--cyan-400);
   }
+
+  .camera-select{
+    width:100%; margin-top:10px; background:var(--navy-900); border:1px solid var(--navy-600);
+    color:var(--text-mid); font-family:inherit; font-size:12.5px; padding:8px 10px; outline:none;
+    clip-path:polygon(8px 0,100% 0,100% calc(100% - 8px),calc(100% - 8px) 100%,0 100%,0 8px);
+    display:none;
+  }
+  .camera-select:focus{ border-color:var(--cyan-500); }
 
   .preview-zone{
     width:100%; margin-top:16px;
@@ -180,14 +188,15 @@
   .corner-brackets span:nth-child(4){ bottom:6px; right:6px; border-bottom:2px solid var(--cyan-400); border-right:2px solid var(--cyan-400); }
 
   .enter-btn{
-    margin-top:22px; width:100%; padding:13px; cursor:pointer;
+    margin-top:20px; width:auto; min-width:200px; padding:9px 22px; cursor:pointer;
     background:linear-gradient(90deg, var(--coral-500), var(--coral-600));
-    border:none; color:#fff; font-family:inherit; font-weight:700; font-size:15px; letter-spacing:0.4px;
-    clip-path:polygon(12px 0,100% 0,100% calc(100% - 12px),calc(100% - 12px) 100%,0 100%,0 12px);
-    display:flex; align-items:center; justify-content:center; gap:8px;
+    border:none; color:#fff; font-family:inherit; font-weight:700; font-size:13.5px; letter-spacing:0.4px;
+    clip-path:polygon(10px 0,100% 0,100% calc(100% - 10px),calc(100% - 10px) 100%,0 100%,0 10px);
+    display:flex; align-items:center; justify-content:center; gap:7px;
     transition:filter .15s, transform .1s;
-    box-shadow:0 8px 24px -8px rgba(255,106,85,0.45);
+    box-shadow:0 6px 18px -8px rgba(255,106,85,0.45);
   }
+  .enter-btn svg{ width:15px; height:15px; }
   .enter-btn:hover{ filter:brightness(1.08); }
   .enter-btn:active{ transform:translateY(1px); }
   .enter-btn:disabled{ opacity:.45; cursor:not-allowed; filter:none; box-shadow:none; }
@@ -368,6 +377,25 @@
   }
   .emoji-popup button:hover{ background:var(--navy-700); }
 
+  .reaction-popup{
+    display:none; position:fixed; bottom:78px; left:50%; transform:translateX(-50%);
+    background:var(--navy-800); border:1px solid var(--cyan-500); padding:10px;
+    grid-template-columns:repeat(6,1fr); gap:6px;
+    clip-path:polygon(10px 0,100% 0,100% calc(100% - 10px),calc(100% - 10px) 100%,0 100%,0 10px);
+    z-index:30; box-shadow:0 10px 30px -10px rgba(0,0,0,0.6);
+  }
+  .reaction-popup button{
+    background:none; border:none; font-size:21px; cursor:pointer; padding:6px; border-radius:4px;
+  }
+  .reaction-popup button:hover{ background:var(--navy-700); }
+
+  .tile-screensharing{
+    position:absolute; top:9px; left:9px; display:flex; align-items:center; gap:5px;
+    background:rgba(30,200,232,0.15); border:1px solid var(--cyan-500); color:var(--cyan-400);
+    font-size:10px; font-weight:700; letter-spacing:.3px; padding:3px 8px;
+    clip-path:polygon(4px 0,100% 0,100% calc(100% - 4px),calc(100% - 4px) 100%,0 100%,0 4px);
+  }
+
   .emoji-float{
     position:fixed; font-size:26px; pointer-events:none; animation:floatUp 1.6s ease-out forwards; z-index:50;
   }
@@ -433,7 +461,13 @@
                 <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="8.5" cy="8.5" r="1.5"/><path d="M21 15l-5-5L5 21"/></svg>
                 Imagem
               </button>
+              <button type="button" class="mode-btn" id="btn-mode-nenhum">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="8" r="4"/><path d="M4 21c0-4 4-6 8-6s8 2 8 6"/><line x1="3" y1="3" x2="21" y2="21"/></svg>
+                Nenhum
+              </button>
             </div>
+
+            <select class="camera-select" id="camera-select"></select>
 
             <div class="preview-zone" id="preview-zone">
               <div class="corner-brackets"><span></span><span></span><span></span><span></span></div>
@@ -529,12 +563,13 @@
       <button class="icon-btn on" id="btn-toggle-cam" title="Câmera">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M23 7l-7 5 7 5V7z"/><rect x="1" y="5" width="15" height="14" rx="2"/></svg>
       </button>
-      <button class="icon-btn" id="btn-screenshare" title="Compartilhar tela (demonstração)">
+      <button class="icon-btn" id="btn-screenshare" title="Compartilhar tela">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="2" y="3" width="20" height="14" rx="2"/><line x1="8" y1="21" x2="16" y2="21"/><line x1="12" y1="17" x2="12" y2="21"/></svg>
       </button>
-      <button class="icon-btn" id="btn-quick-emoji" title="Reação rápida">
+      <button class="icon-btn" id="btn-quick-emoji" title="Escolher reação">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><path d="M8 14s1.5 2 4 2 4-2 4-2"/><line x1="9" y1="9" x2="9.01" y2="9"/><line x1="15" y1="9" x2="15.01" y2="9"/></svg>
       </button>
+      <div class="reaction-popup" id="reaction-popup"></div>
       <button class="leave-btn" id="btn-leave">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><path d="M10.68 13.31a16 16 0 003.41 2.6l1-1a1 1 0 011.09-.21 11.4 11.4 0 003.6.57 1 1 0 011 1V19a1 1 0 01-1 1A17 17 0 013 4a1 1 0 011-1h2.72a1 1 0 011 1 11.4 11.4 0 00.57 3.6 1 1 0 01-.25 1l-1.04 1.09"/><line x1="2" y1="2" x2="22" y2="22"/></svg>
         Sair
@@ -559,7 +594,7 @@
 
   var state = {
     name:"",
-    mode:"camera", // 'camera' | 'avatar'
+    mode:"camera", // 'camera' | 'avatar' | 'nenhum'
     previewStream:null,   // câmera usada só na pré-visualização da tela de entrada
     localStream:null,     // stream real usada na chamada (áudio [+vídeo])
     avatarDataUrl:null,
@@ -568,6 +603,10 @@
     chatOpen:true,
     unread:0,
     pendingAttachment:null,
+    selectedCameraId:null,
+
+    screenStream:null,
+    isScreenSharing:false,
 
     configPromise:null,
     serverUrl:null,
@@ -576,7 +615,7 @@
 
     socket:null,
     myId:null,
-    players:{},          // { id: {name, mode, avatarDataUrl, micOn, camOn} }, vem do servidor
+    players:{},          // { id: {name, mode, avatarDataUrl, micOn, camOn, telaCompartilhada} }, vem do servidor
     peerConnections:{},  // id -> RTCPeerConnection
     remoteStreams:{},    // id -> MediaStream
     audioMeters:{}       // id -> { ctx, raf }
@@ -601,6 +640,8 @@
     inputName:document.getElementById('input-name'),
     btnModeCamera:document.getElementById('btn-mode-camera'),
     btnModeAvatar:document.getElementById('btn-mode-avatar'),
+    btnModeNenhum:document.getElementById('btn-mode-nenhum'),
+    cameraSelect:document.getElementById('camera-select'),
     previewZone:document.getElementById('preview-zone'),
     previewVideo:document.getElementById('preview-video'),
     previewAvatarImg:document.getElementById('preview-avatar-img'),
@@ -638,6 +679,7 @@
     btnToggleCam:document.getElementById('btn-toggle-cam'),
     btnScreenshare:document.getElementById('btn-screenshare'),
     btnQuickEmoji:document.getElementById('btn-quick-emoji'),
+    reactionPopup:document.getElementById('reaction-popup'),
     btnLeave:document.getElementById('btn-leave')
   };
 
@@ -660,8 +702,10 @@
     state.mode = mode;
     el.btnModeCamera.classList.toggle('active', mode === 'camera');
     el.btnModeAvatar.classList.toggle('active', mode === 'avatar');
+    el.btnModeNenhum.classList.toggle('active', mode === 'nenhum');
     el.btnUploadAvatar.style.display = mode === 'avatar' ? 'block' : 'none';
-    el.btnToggleCam.disabled = mode === 'avatar';
+    el.cameraSelect.style.display = 'none';
+    el.btnToggleCam.disabled = mode !== 'camera';
 
     if(mode === 'camera'){
       el.previewAvatarImg.style.display = 'none';
@@ -669,20 +713,23 @@
     } else {
       stopPreviewCamera();
       el.previewVideo.style.display = 'none';
-      if(state.avatarDataUrl){
+      if(mode === 'avatar' && state.avatarDataUrl){
         el.previewAvatarImg.src = state.avatarDataUrl;
         el.previewAvatarImg.style.display = 'block';
         el.previewPlaceholder.style.display = 'none';
       } else {
         el.previewAvatarImg.style.display = 'none';
         el.previewPlaceholder.style.display = 'flex';
-        el.previewPlaceholderText.textContent = 'Escolha uma imagem para seu avatar';
+        el.previewPlaceholderText.textContent = mode === 'avatar'
+          ? 'Escolha uma imagem para seu avatar'
+          : 'Você vai entrar só com áudio, sem vídeo';
       }
     }
   }
 
   el.btnModeCamera.addEventListener('click', function(){ setMode('camera'); });
   el.btnModeAvatar.addEventListener('click', function(){ setMode('avatar'); });
+  el.btnModeNenhum.addEventListener('click', function(){ setMode('nenhum'); });
 
   el.btnUploadAvatar.addEventListener('click', function(){ el.inputAvatarFile.click(); });
   el.inputAvatarFile.addEventListener('change', function(e){
@@ -728,16 +775,44 @@
       el.previewPlaceholder.style.display = 'none';
       return;
     }
-    navigator.mediaDevices.getUserMedia({ video:true, audio:false }).then(function(stream){
+    var constraints = { video: state.selectedCameraId ? { deviceId:{ exact:state.selectedCameraId } } : true, audio:false };
+    navigator.mediaDevices.getUserMedia(constraints).then(function(stream){
       state.previewStream = stream;
       el.previewVideo.srcObject = stream;
       el.previewVideo.style.display = 'block';
       el.previewPlaceholder.style.display = 'none';
+      popularSeletorDeCamera();
     }).catch(function(){
       el.previewPlaceholder.style.display = 'flex';
       el.previewPlaceholderText.textContent = 'Não foi possível acessar a câmera — verifique as permissões';
     });
   }
+
+  function popularSeletorDeCamera(){
+    if(!navigator.mediaDevices || !navigator.mediaDevices.enumerateDevices) return;
+    navigator.mediaDevices.enumerateDevices().then(function(devices){
+      var cameras = devices.filter(function(d){ return d.kind === 'videoinput'; });
+      if(cameras.length < 2){
+        el.cameraSelect.style.display = 'none';
+        return;
+      }
+      el.cameraSelect.innerHTML = '';
+      cameras.forEach(function(cam, i){
+        var opt = document.createElement('option');
+        opt.value = cam.deviceId;
+        opt.textContent = cam.label || ('Câmera ' + (i + 1));
+        el.cameraSelect.appendChild(opt);
+      });
+      if(state.selectedCameraId) el.cameraSelect.value = state.selectedCameraId;
+      el.cameraSelect.style.display = state.mode === 'camera' ? 'block' : 'none';
+    }).catch(function(){});
+  }
+
+  el.cameraSelect.addEventListener('change', function(){
+    state.selectedCameraId = el.cameraSelect.value || null;
+    stopPreviewCamera();
+    startLocalCamera();
+  });
 
   function stopPreviewCamera(){
     if(state.previewStream){
@@ -775,7 +850,8 @@
       return;
     }
 
-    var constraints = state.mode === 'camera' ? { audio:true, video:true } : { audio:true, video:false };
+    var videoConstraint = state.selectedCameraId ? { deviceId:{ exact:state.selectedCameraId } } : true;
+    var constraints = state.mode === 'camera' ? { audio:true, video:videoConstraint } : { audio:true, video:false };
     navigator.mediaDevices.getUserMedia(constraints).then(function(stream){
       state.localStream = stream;
       proceedToRoom();
@@ -813,6 +889,12 @@
       v.autoplay = true; v.muted = !!opts.self; v.playsInline = true;
       v.srcObject = opts.videoStream;
       tile.appendChild(v);
+      if(opts.sharing){
+        var badge = document.createElement('div');
+        badge.className = 'tile-screensharing';
+        badge.innerHTML = '<svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4"><rect x="2" y="3" width="20" height="14" rx="2"/><line x1="8" y1="21" x2="16" y2="21"/><line x1="12" y1="17" x2="12" y2="21"/></svg> Tela';
+        tile.appendChild(badge);
+      }
     } else {
       var av = document.createElement('div');
       av.className = 'tile-avatar';
@@ -849,7 +931,10 @@
     el.videoGrid.innerHTML = '';
 
     var selfOpts = { self:true, id:'self', name:state.name || 'Você', micOff:!state.micOn };
-    if(state.mode === 'camera' && state.camOn && state.localStream && state.localStream.getVideoTracks().length){
+    if(state.isScreenSharing && state.screenStream){
+      selfOpts.videoStream = state.screenStream;
+      selfOpts.sharing = true;
+    } else if(state.mode === 'camera' && state.camOn && state.localStream && state.localStream.getVideoTracks().length){
       selfOpts.videoStream = state.localStream;
     } else if(state.mode === 'avatar' && state.avatarDataUrl){
       selfOpts.imgSrc = state.avatarDataUrl;
@@ -872,9 +957,11 @@
       var p = state.players[id];
       var remoteStream = state.remoteStreams[id];
       var opts = { id:id, name:p.name, micOff:!p.micOn };
-      if(p.mode === 'camera' && p.camOn && remoteStream && remoteStream.getVideoTracks().length){
+      var temVideoAtivo = remoteStream && remoteStream.getVideoTracks().length && (p.camOn || p.telaCompartilhada);
+      if(temVideoAtivo){
         opts.videoStream = remoteStream;
-      } else if(p.mode === 'avatar' && p.avatarDataUrl){
+        opts.sharing = !!p.telaCompartilhada;
+      } else if(p.avatarDataUrl){
         opts.imgSrc = p.avatarDataUrl;
         opts.audioStream = remoteStream;
       } else {
@@ -1029,6 +1116,19 @@
       renderGrid();
     };
 
+    var primeiraNegociacaoIgnorada = false;
+    pc.onnegotiationneeded = function(){
+      if(!primeiraNegociacaoIgnorada){
+        primeiraNegociacaoIgnorada = true;
+        return; // a primeira negociação já é tratada explicitamente logo abaixo
+      }
+      pc.createOffer().then(function(offer){
+        return pc.setLocalDescription(offer);
+      }).then(function(){
+        state.socket.emit('webrtc-offer', { to:peerId, offer:pc.localDescription });
+      }).catch(function(){});
+    };
+
     if(initiator){
       pc.createOffer().then(function(offer){
         return pc.setLocalDescription(offer);
@@ -1132,8 +1232,62 @@
     renderGrid();
   });
 
+  function iniciarCompartilhamentoTela(){
+    if(!navigator.mediaDevices || !navigator.mediaDevices.getDisplayMedia){
+      addSystemMessage('Seu navegador não suporta compartilhamento de tela.');
+      return;
+    }
+    navigator.mediaDevices.getDisplayMedia({ video:true, audio:false }).then(function(screenStream){
+      state.screenStream = screenStream;
+      state.isScreenSharing = true;
+
+      var screenTrack = screenStream.getVideoTracks()[0];
+      Object.keys(state.peerConnections).forEach(function(id){
+        var pc = state.peerConnections[id];
+        var sender = pc.getSenders().find(function(s){ return s.track && s.track.kind === 'video'; });
+        if(sender){
+          sender.replaceTrack(screenTrack);
+        } else {
+          pc.addTrack(screenTrack, screenStream); // dispara onnegotiationneeded
+        }
+      });
+
+      screenTrack.onended = function(){ pararCompartilhamentoTela(); };
+
+      el.btnScreenshare.classList.add('on');
+      el.btnToggleCam.disabled = true;
+      if(state.socket && state.socket.connected) state.socket.emit('tela-estado', { compartilhando:true });
+      renderGrid();
+    }).catch(function(){
+      // usuário cancelou o seletor do navegador — não faz nada
+    });
+  }
+
+  function pararCompartilhamentoTela(){
+    if(!state.isScreenSharing) return;
+    state.isScreenSharing = false;
+
+    if(state.screenStream){
+      state.screenStream.getTracks().forEach(function(t){ t.stop(); });
+      state.screenStream = null;
+    }
+
+    var novaTrackVideo = (state.mode === 'camera' && state.localStream) ? state.localStream.getVideoTracks()[0] : null;
+    Object.keys(state.peerConnections).forEach(function(id){
+      var pc = state.peerConnections[id];
+      var sender = pc.getSenders().find(function(s){ return s.track && s.track.kind === 'video'; });
+      if(sender) sender.replaceTrack(novaTrackVideo || null);
+    });
+
+    el.btnScreenshare.classList.remove('on');
+    el.btnToggleCam.disabled = state.mode !== 'camera';
+    if(state.socket && state.socket.connected) state.socket.emit('tela-estado', { compartilhando:false });
+    renderGrid();
+  }
+
   el.btnScreenshare.addEventListener('click', function(){
-    el.btnScreenshare.classList.toggle('on');
+    if(state.isScreenSharing) pararCompartilhamentoTela();
+    else iniciarCompartilhamentoTela();
   });
 
   el.btnLeave.addEventListener('click', function(){
@@ -1143,6 +1297,13 @@
   function leaveRoom(){
     Object.keys(state.peerConnections).forEach(closePeerConnection);
     teardownAudioMeter('self');
+
+    if(state.screenStream){
+      state.screenStream.getTracks().forEach(function(t){ t.stop(); });
+      state.screenStream = null;
+    }
+    state.isScreenSharing = false;
+    el.btnScreenshare.classList.remove('on');
 
     if(state.localStream){
       state.localStream.getTracks().forEach(function(t){ t.stop(); });
@@ -1367,6 +1528,9 @@
     if(!el.emojiPopup.contains(e.target) && e.target !== el.btnEmoji && !el.btnEmoji.contains(e.target)){
       el.emojiPopup.style.display = 'none';
     }
+    if(!el.reactionPopup.contains(e.target) && e.target !== el.btnQuickEmoji && !el.btnQuickEmoji.contains(e.target)){
+      el.reactionPopup.style.display = 'none';
+    }
   });
 
   // ---------- quick floating reaction ----------
@@ -1387,14 +1551,32 @@
     spawnFloatingEmoji(data.emoji, rect.left + rect.width/2 - 13, rect.top + 10);
   }
 
-  el.btnQuickEmoji.addEventListener('click', function(){
-    var em = EMOJIS[Math.floor(Math.random()*EMOJIS.length)];
+  function enviarReacao(em){
     if(state.socket && state.socket.connected){
       state.socket.emit('reacao', { emoji:em });
     } else {
       var rect = el.btnQuickEmoji.getBoundingClientRect();
       spawnFloatingEmoji(em, rect.left + rect.width/2 - 13, rect.top - 10);
     }
+  }
+
+  function buildReactionPopup(){
+    el.reactionPopup.innerHTML = '';
+    EMOJIS.forEach(function(em){
+      var btn = document.createElement('button');
+      btn.type = 'button';
+      btn.textContent = em;
+      btn.addEventListener('click', function(){
+        enviarReacao(em);
+        el.reactionPopup.style.display = 'none';
+      });
+      el.reactionPopup.appendChild(btn);
+    });
+  }
+  buildReactionPopup();
+
+  el.btnQuickEmoji.addEventListener('click', function(){
+    el.reactionPopup.style.display = el.reactionPopup.style.display === 'grid' ? 'none' : 'grid';
   });
 
 })();
