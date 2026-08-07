@@ -28,6 +28,7 @@
     --cut-sm:10px;
     --danger:#ff5c5c;
     --online:#3ee08c;
+    --away:#f5b942;
   }
 
   *{box-sizing:border-box; margin:0; padding:0;}
@@ -246,6 +247,14 @@
   .icon-btn.danger:hover{ background:var(--coral-600); color:#fff; }
   .icon-btn.on{ border-color:var(--cyan-500); color:var(--cyan-400); background:rgba(30,200,232,0.12); }
   .icon-btn.off{ border-color:var(--coral-600); color:var(--coral-500); background:rgba(255,106,85,0.1); }
+  .icon-btn.away{ border-color:var(--away); color:var(--away); background:rgba(245,185,66,0.12); }
+
+  .tile-away{
+    position:absolute; bottom:9px; right:9px; display:flex; align-items:center; gap:5px;
+    background:rgba(245,185,66,0.15); border:1px solid var(--away); color:var(--away);
+    font-size:10px; font-weight:700; letter-spacing:.3px; padding:3px 8px;
+    clip-path:polygon(4px 0,100% 0,100% calc(100% - 4px),calc(100% - 4px) 100%,0 100%,0 4px);
+  }
 
   .copy-link-btn{
     width:auto; padding:0 14px; gap:7px; font-size:12.5px; font-weight:600; font-family:inherit;
@@ -285,7 +294,7 @@
   .tile.featured{
     grid-column:1 / -1;
     aspect-ratio:16/9;
-    max-height:62vh;
+    max-height:80vh;
   }
   .tile video{ width:100%; height:100%; object-fit:cover; transform:scaleX(-1); }
   .tile.sharing{ background:#000; }
@@ -600,6 +609,9 @@
       <button class="icon-btn" id="btn-quick-emoji" title="Escolher reação">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><path d="M8 14s1.5 2 4 2 4-2 4-2"/><line x1="9" y1="9" x2="9.01" y2="9"/><line x1="15" y1="9" x2="15.01" y2="9"/></svg>
       </button>
+      <button class="icon-btn" id="btn-ausente" title="Marcar como ausente / volto logo">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><path d="M12 6v6l4 2"/></svg>
+      </button>
       <div class="reaction-popup" id="reaction-popup"></div>
       <button class="leave-btn" id="btn-leave">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><path d="M10.68 13.31a16 16 0 003.41 2.6l1-1a1 1 0 011.09-.21 11.4 11.4 0 003.6.57 1 1 0 011 1V19a1 1 0 01-1 1A17 17 0 013 4a1 1 0 011-1h2.72a1 1 0 011 1 11.4 11.4 0 00.57 3.6 1 1 0 01-.25 1l-1.04 1.09"/><line x1="2" y1="2" x2="22" y2="22"/></svg>
@@ -638,6 +650,7 @@
 
     screenStream:null,
     isScreenSharing:false,
+    ausente:false,
 
     configPromise:null,
     serverUrl:null,
@@ -738,6 +751,7 @@
     btnToggleCam:document.getElementById('btn-toggle-cam'),
     btnScreenshare:document.getElementById('btn-screenshare'),
     btnQuickEmoji:document.getElementById('btn-quick-emoji'),
+    btnAusente:document.getElementById('btn-ausente'),
     reactionPopup:document.getElementById('reaction-popup'),
     btnLeave:document.getElementById('btn-leave')
   };
@@ -983,6 +997,13 @@
     label.innerHTML = escapeHtml(opts.name) + (opts.micOff ? ' <span class="mic-off">🔇</span>' : '');
     tile.appendChild(label);
 
+    if(opts.ausente){
+      var seloAusente = document.createElement('div');
+      seloAusente.className = 'tile-away';
+      seloAusente.innerHTML = '<svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4"><circle cx="12" cy="12" r="10"/><path d="M12 6v6l4 2"/></svg> Ausente';
+      tile.appendChild(seloAusente);
+    }
+
     return tile;
   }
 
@@ -991,7 +1012,7 @@
     var tilesDestaque = [];
     var tilesNormais = [];
 
-    var selfOpts = { self:true, id:'self', name:state.name || 'Você', micOff:!state.micOn };
+    var selfOpts = { self:true, id:'self', name:state.name || 'Você', micOff:!state.micOn, ausente:state.ausente };
     if(state.isScreenSharing && state.screenStream){
       selfOpts.videoStream = state.screenStream;
       selfOpts.sharing = true;
@@ -1016,7 +1037,7 @@
         if(id === state.myId) return;
         var p = state.players[id];
         var remoteStream = state.remoteStreams[id];
-        var opts = { id:id, name:p.name, micOff:!p.micOn };
+        var opts = { id:id, name:p.name, micOff:!p.micOn, ausente:!!p.ausente };
         var temVideoAtivo = remoteStream && remoteStream.getVideoTracks().length && (p.camOn || p.telaCompartilhada);
         if(temVideoAtivo){
           opts.videoStream = remoteStream;
@@ -1171,7 +1192,8 @@
       });
     }
     if(state.isScreenSharing && state.screenStream && state.screenStream.getVideoTracks().length){
-      pc.addTrack(state.screenStream.getVideoTracks()[0], state.screenStream);
+      var senderTela = pc.addTrack(state.screenStream.getVideoTracks()[0], state.screenStream);
+      aumentarQualidadeDoSender(senderTela);
     }
 
     pc.onicecandidate = function(e){
@@ -1323,11 +1345,24 @@
     pedidoTelaEmAndamento = true;
     el.btnScreenshare.disabled = true;
 
-    navigator.mediaDevices.getDisplayMedia({ video:true, audio:false }).then(function(screenStream){
+    var restricoesTela = {
+      video:{
+        width:{ ideal:2560, max:3840 },
+        height:{ ideal:1440, max:2160 },
+        frameRate:{ ideal:15, max:30 }
+      },
+      audio:false
+    };
+
+    navigator.mediaDevices.getDisplayMedia(restricoesTela).then(function(screenStream){
       state.screenStream = screenStream;
       state.isScreenSharing = true;
 
       var screenTrack = screenStream.getVideoTracks()[0];
+      // prioriza nitidez de texto/detalhe em vez de suavidade de movimento — ideal pra
+      // compartilhar documentos, planilhas, código etc.
+      try{ screenTrack.contentHint = 'detail'; }catch(e){}
+
       var ids = Object.keys(state.peerConnections);
       ids.forEach(function(id){
         var pc = state.peerConnections[id];
@@ -1335,8 +1370,9 @@
         if(sender){
           sender.replaceTrack(screenTrack);
         } else {
-          pc.addTrack(screenTrack, screenStream);
+          sender = pc.addTrack(screenTrack, screenStream);
         }
+        aumentarQualidadeDoSender(sender);
       });
 
       screenTrack.onended = function(){ pararCompartilhamentoTela(); };
@@ -1351,6 +1387,16 @@
       pedidoTelaEmAndamento = false;
       el.btnScreenshare.disabled = false;
     });
+  }
+
+  // eleva o teto de taxa de bits do envio de vídeo — sem isso, o navegador usa um valor
+  // conservador padrão (bom pra webcam, mas deixa texto/documentos compartilhados borrados)
+  function aumentarQualidadeDoSender(sender){
+    if(!sender || !sender.setParameters) return;
+    var params = sender.getParameters();
+    if(!params.encodings || !params.encodings.length) params.encodings = [{}];
+    params.encodings[0].maxBitrate = 4 * 1000 * 1000; // 4 Mbps
+    sender.setParameters(params).catch(function(){});
   }
 
   function pararCompartilhamentoTela(){
@@ -1380,6 +1426,17 @@
     else iniciarCompartilhamentoTela();
   });
 
+  el.btnAusente.addEventListener('click', function(){
+    state.ausente = !state.ausente;
+    el.btnAusente.classList.toggle('away', state.ausente);
+    el.btnAusente.title = state.ausente ? 'Marcar como de volta' : 'Marcar como ausente / volto logo';
+    if(state.socket && state.socket.connected){
+      state.socket.emit('ausente-estado', { ausente:state.ausente });
+    }
+    addSystemMessage(state.ausente ? 'Você está ausente agora.' : 'Você voltou.');
+    renderGrid();
+  });
+
   el.btnLeave.addEventListener('click', function(){
     leaveRoom();
   });
@@ -1394,6 +1451,10 @@
     }
     state.isScreenSharing = false;
     el.btnScreenshare.classList.remove('on');
+
+    state.ausente = false;
+    el.btnAusente.classList.remove('away');
+    el.btnAusente.title = 'Marcar como ausente / volto logo';
 
     if(state.localStream){
       state.localStream.getTracks().forEach(function(t){ t.stop(); });
@@ -1588,14 +1649,17 @@
   el.chatFileInput.addEventListener('change', function(e){
     var file = e.target.files && e.target.files[0];
     if(!file) return;
+    processarArquivoAnexo(file);
+    el.chatFileInput.value = '';
+  });
 
+  function processarArquivoAnexo(file){
+    if(!file) return;
     if(file.size > MAX_FILE_BYTES){
       showAttachPreview(file.name + ' — arquivo muito grande (máx. 5MB)', true);
       state.pendingAttachment = null;
-      el.chatFileInput.value = '';
       return;
     }
-
     var isImage = file.type.indexOf('image/') === 0;
     var reader = new FileReader();
     reader.onload = function(ev){
@@ -1603,6 +1667,25 @@
       showAttachPreview(file.name, false);
     };
     reader.readAsDataURL(file);
+  }
+
+  // Ctrl+V com um arquivo/imagem copiado (print, ou copiar arquivo do explorador)
+  // anexa direto na mensagem, sem precisar clicar no clipe.
+  el.chatTextInput.addEventListener('paste', function(e){
+    var itens = (e.clipboardData && e.clipboardData.items) || [];
+    for(var i = 0; i < itens.length; i++){
+      if(itens[i].kind === 'file'){
+        var arquivo = itens[i].getAsFile();
+        if(arquivo){
+          e.preventDefault();
+          var nomeado = arquivo.name && arquivo.name !== 'blob'
+            ? arquivo
+            : new File([arquivo], (arquivo.type.indexOf('image/') === 0 ? 'imagem-colada.png' : 'arquivo-colado'), { type:arquivo.type });
+          processarArquivoAnexo(nomeado);
+        }
+        return;
+      }
+    }
   });
 
   function showAttachPreview(name, isError){

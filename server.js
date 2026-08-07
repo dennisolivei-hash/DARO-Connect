@@ -18,7 +18,7 @@ const io = new Server(server, {
   maxHttpBufferSize: 8 * 1024 * 1024, // 8MB — permite anexar imagens/arquivos no chat
 });
 
-// participantes conectados: { [socket.id]: { name, mode, avatarDataUrl, micOn, camOn, telaCompartilhada, salaId } }
+// participantes conectados: { [socket.id]: { name, mode, avatarDataUrl, micOn, camOn, telaCompartilhada, ausente, salaId } }
 const players = {};
 
 const MODOS_VALIDOS = ['camera', 'avatar', 'nenhum'];
@@ -55,9 +55,17 @@ io.on('connection', (socket) => {
       micOn: true,
       camOn: modoFinal === 'camera',
       telaCompartilhada: false,
+      ausente: false,
       salaId,
     };
     broadcastEstado(salaId);
+  });
+
+  socket.on('ausente-estado', ({ ausente } = {}) => {
+    const p = players[socket.id];
+    if (!p) return;
+    p.ausente = !!ausente;
+    broadcastEstado(p.salaId);
   });
 
   socket.on('mic-estado', ({ ligado } = {}) => {
