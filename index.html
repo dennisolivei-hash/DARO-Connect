@@ -1006,10 +1006,17 @@
     var pc = new RTCPeerConnection(ICE_SERVERS);
     state.peerConnections[peerId] = pc;
 
+    var temVideoLocal = false;
     if(state.localStream){
       state.localStream.getTracks().forEach(function(track){
         pc.addTrack(track, state.localStream);
+        if(track.kind === 'video') temVideoLocal = true;
       });
+    }
+    if(!temVideoLocal){
+      // mesmo sem enviar vídeo (modo avatar, ou câmera indisponível), garante espaço
+      // na negociação pra RECEBER o vídeo dos outros participantes normalmente
+      try{ pc.addTransceiver('video', { direction:'recvonly' }); }catch(e){}
     }
 
     pc.onicecandidate = function(e){
