@@ -978,6 +978,7 @@
         var remoteStream = state.remoteStreams[id];
         var opts = { id:id, name:p.name, micOff:!p.micOn };
         var temVideoAtivo = remoteStream && remoteStream.getVideoTracks().length && (p.camOn || p.telaCompartilhada);
+        console.log('[DIAG] renderGrid p=' + id + ' camOn=' + p.camOn + ' telaCompartilhada=' + p.telaCompartilhada + ' remoteStream?=' + !!remoteStream + ' videoTracks=' + (remoteStream ? remoteStream.getVideoTracks().length : 'n/a') + ' -> mostra vídeo? ' + !!temVideoAtivo);
         if(temVideoAtivo){
           opts.videoStream = remoteStream;
           if(p.telaCompartilhada){ opts.sharing = true; opts.featured = true; }
@@ -1130,6 +1131,7 @@
     var streamsIniciais = state.localStream ? [state.localStream] : [];
     var videoTransceiver = pc.addTransceiver('video', { direction:'sendrecv', streams:streamsIniciais });
     state.videoSenders[peerId] = videoTransceiver.sender;
+    console.log('[DIAG] videoSender registrado para ' + peerId + ' | total agora=' + Object.keys(state.videoSenders).length);
     if(state.mode === 'camera' && state.localStream && state.localStream.getVideoTracks().length){
       videoTransceiver.sender.replaceTrack(state.localStream.getVideoTracks()[0]);
     } else if(state.isScreenSharing && state.screenStream){
@@ -1140,7 +1142,12 @@
       if(e.candidate) state.socket.emit('webrtc-ice', { to:peerId, candidate:e.candidate });
     };
 
+    pc.oniceconnectionstatechange = function(){
+      console.log('[DIAG] ' + peerId + ' iceConnectionState=' + pc.iceConnectionState + ' signalingState=' + pc.signalingState);
+    };
+
     pc.ontrack = function(e){
+      console.log('[DIAG] ontrack recebido de ' + peerId + ' kind=' + e.track.kind + ' readyState=' + e.track.readyState);
       if(!state.remoteStreams[peerId]){
         state.remoteStreams[peerId] = new MediaStream();
       }
@@ -1266,8 +1273,20 @@
       state.isScreenSharing = true;
 
       var screenTrack = screenStream.getVideoTracks()[0];
-      Object.keys(state.videoSenders).forEach(function(id){
-        state.videoSenders[id].replaceTrack(screenTrack);
+      var ids = Object.keys(state.videoSenders);
+      console.log('[DIAG] compartilhamento iniciado. peers registrados em videoSenders: ' + JSON.stringify(ids) + ' | conexões abertas: ' + JSON.stringify(Object.keys(state.peerConnections)));
+      ids.forEach(function(id){
+        try{
+          var resultado = state.videoSenders[id].replaceTrack(screenTrack);
+          if(resultado && resultado.then){
+            resultado.then(function(){ console.log('[DIAG] replaceTrack OK -> ' + id); })
+                      .catch(function(err){ console.log('[DIAG] replaceTrack ERRO -> ' + id + ': ' + err); });
+          } else {
+            console.log('[DIAG] replaceTrack chamado (sem promise) -> ' + id);
+          }
+        }catch(err){
+          console.log('[DIAG] replaceTrack EXCEÇÃO -> ' + id + ': ' + err);
+        }
       });
 
       screenTrack.onended = function(){ pararCompartilhamentoTela(); };
@@ -1276,8 +1295,8 @@
       el.btnToggleCam.disabled = true;
       if(state.socket && state.socket.connected) state.socket.emit('tela-estado', { compartilhando:true });
       renderGrid();
-    }).catch(function(){
-      // usuário cancelou o seletor do navegador — não faz nada
+    }).catch(function(err){
+      console.log('[DIAG] getDisplayMedia falhou/cancelado: ' + err);
     });
   }
 
