@@ -690,10 +690,28 @@
     if(!file) return;
     var reader = new FileReader();
     reader.onload = function(ev){
-      state.avatarDataUrl = ev.target.result;
-      el.previewAvatarImg.src = state.avatarDataUrl;
-      el.previewAvatarImg.style.display = 'block';
-      el.previewPlaceholder.style.display = 'none';
+      var img = new Image();
+      img.onload = function(){
+        var MAX_DIM = 320;
+        var scale = Math.min(1, MAX_DIM / Math.max(img.width, img.height));
+        var w = Math.max(1, Math.round(img.width * scale));
+        var h = Math.max(1, Math.round(img.height * scale));
+        var canvas = document.createElement('canvas');
+        canvas.width = w; canvas.height = h;
+        canvas.getContext('2d').drawImage(img, 0, 0, w, h);
+        state.avatarDataUrl = canvas.toDataURL('image/jpeg', 0.78);
+        el.previewAvatarImg.src = state.avatarDataUrl;
+        el.previewAvatarImg.style.display = 'block';
+        el.previewPlaceholder.style.display = 'none';
+      };
+      img.onerror = function(){
+        // se por algum motivo não der pra processar, usa a imagem original mesmo
+        state.avatarDataUrl = ev.target.result;
+        el.previewAvatarImg.src = state.avatarDataUrl;
+        el.previewAvatarImg.style.display = 'block';
+        el.previewPlaceholder.style.display = 'none';
+      };
+      img.src = ev.target.result;
     };
     reader.readAsDataURL(file);
   });
