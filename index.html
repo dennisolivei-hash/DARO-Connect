@@ -824,6 +824,17 @@
         av.textContent = opts.initials;
       }
       tile.appendChild(av);
+
+      // sem vídeo nessa aba (avatar ou câmera desligada) — o áudio precisa
+      // de um elemento próprio pra tocar, já que não tem <video> pra "carregar" ele
+      if(opts.audioStream){
+        var audioEl = document.createElement('audio');
+        audioEl.autoplay = true;
+        audioEl.muted = !!opts.self;
+        audioEl.srcObject = opts.audioStream;
+        audioEl.style.display = 'none';
+        tile.appendChild(audioEl);
+      }
     }
 
     var label = document.createElement('div');
@@ -865,8 +876,10 @@
         opts.videoStream = remoteStream;
       } else if(p.mode === 'avatar' && p.avatarDataUrl){
         opts.imgSrc = p.avatarDataUrl;
+        opts.audioStream = remoteStream;
       } else {
         opts.initials = initials(p.name || '?');
+        opts.audioStream = remoteStream;
       }
       el.videoGrid.appendChild(buildTile(opts));
     });
