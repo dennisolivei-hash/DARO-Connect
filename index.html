@@ -581,7 +581,8 @@
       <button class="icon-btn on" id="btn-toggle-cam" title="Câmera">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M23 7l-7 5 7 5V7z"/><rect x="1" y="5" width="15" height="14" rx="2"/></svg>
       </button>
-      <button class="icon-btn" id="btn-screenshare" title="Compartilhar tela">
+      <button class="icon-btn" id="btn-screenshare" title="Compartilhar tela (desativado nesta versão de teste)" style="display:none;">
+
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="2" y="3" width="20" height="14" rx="2"/><line x1="8" y1="21" x2="16" y2="21"/><line x1="12" y1="17" x2="12" y2="21"/></svg>
       </button>
       <button class="icon-btn" id="btn-quick-emoji" title="Escolher reação">
@@ -1120,22 +1121,10 @@
     state.peerConnections[peerId] = pc;
 
     if(state.localStream){
-      state.localStream.getAudioTracks().forEach(function(track){
+      state.localStream.getTracks().forEach(function(track){
         pc.addTrack(track, state.localStream);
       });
-    }
-
-    // vídeo sempre reserva um transceiver 'sendrecv' desde o início, mesmo sem
-    // nenhuma track pra enviar agora — assim, ligar a câmera ou compartilhar tela
-    // depois é só um replaceTrack(), sem precisar renegociar a conexão.
-    var streamsIniciais = state.localStream ? [state.localStream] : [];
-    var videoTransceiver = pc.addTransceiver('video', { direction:'sendrecv', streams:streamsIniciais });
-    state.videoSenders[peerId] = videoTransceiver.sender;
-    console.log('[DIAG] videoSender registrado para ' + peerId + ' | total agora=' + Object.keys(state.videoSenders).length);
-    if(state.mode === 'camera' && state.localStream && state.localStream.getVideoTracks().length){
-      videoTransceiver.sender.replaceTrack(state.localStream.getVideoTracks()[0]);
-    } else if(state.isScreenSharing && state.screenStream){
-      videoTransceiver.sender.replaceTrack(state.screenStream.getVideoTracks()[0]);
+      console.log('[DIAG] tracks locais anexadas pra ' + peerId + ': ' + state.localStream.getTracks().map(function(t){return t.kind;}).join(','));
     }
 
     pc.onicecandidate = function(e){
