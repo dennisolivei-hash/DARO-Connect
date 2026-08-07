@@ -1,4 +1,4 @@
-// server.js — Backend do DARO Connect (sala de reunião com vídeo, áudio e chat)
+// server.js — Backend do DARO Connect (salas de reunião com vídeo, áudio e chat)
 // Requer Node.js 18+
 
 const express = require('express');
@@ -18,18 +18,36 @@ const io = new Server(server, {
   maxHttpBufferSize: 8 * 1024 * 1024, // 8MB — permite anexar imagens/arquivos no chat
 });
 
-// participantes conectados: { [socket.id]: { name, mode, avatarDataUrl, micOn, camOn, telaCompartilhada } }
+// participantes conectados: { [socket.id]: { name, mode, avatarDataUrl, micOn, camOn, telaCompartilhada, salaId } }
 const players = {};
 
-function broadcastEstado() {
-  io.emit('estado', players);
+const MODOS_VALIDOS = ['camera', 'avatar', 'nenhum'];
+const SALA_PADRAO = 'geral';
+
+function normalizarSala(sala) {
+  const limpo = String(sala || SALA_PADRAO).trim().toLowerCase().replace(/[^a-z0-9-]/g, '');
+  return (limpo || SALA_PADRAO).slice(0, 40);
 }
 
-const MODOS_VALIDOS = ['camera', 'avatar', 'nenhum'];
+// devolve só os participantes daquela sala, no formato { socketId: {...} }
+function jogadoresDaSala(salaId) {
+  const resultado = {};
+  for (const [id, p] of Object.entries(players)) {
+    if (p.salaId === salaId) resultado[id] = p;
+  }
+  return resultado;
+}
+
+function broadcastEstado(salaId) {
+  io.to(salaId).emit('estado', jogadoresDaSala(salaId));
+}
 
 io.on('connection', (socket) => {
-  socket.on('entrar', ({ nome, modo, avatarDataUrl } = {}) => {
+  socket.on('entrar', ({ nome, modo, avatarDataUrl, sala } = {}) => {
     const modoFinal = MODOS_VALIDOS.includes(modo) ? modo : 'camera';
+    const salaId = normalizarSala(sala);
+
+    socket.join(salaId);
     players[socket.id] = {
       name: String(nome || 'Convidado').slice(0, 30),
       mode: modoFinal,
@@ -37,37 +55,38 @@ io.on('connection', (socket) => {
       micOn: true,
       camOn: modoFinal === 'camera',
       telaCompartilhada: false,
+      salaId,
     };
-    broadcastEstado();
+    broadcastEstado(salaId);
   });
 
   socket.on('mic-estado', ({ ligado } = {}) => {
     const p = players[socket.id];
     if (!p) return;
     p.micOn = !!ligado;
-    broadcastEstado();
+    broadcastEstado(p.salaId);
   });
 
   socket.on('tela-estado', ({ compartilhando } = {}) => {
     const p = players[socket.id];
     if (!p) return;
     p.telaCompartilhada = !!compartilhando;
-    broadcastEstado();
+    broadcastEstado(p.salaId);
   });
 
   socket.on('cam-estado', ({ ligada } = {}) => {
     const p = players[socket.id];
     if (!p) return;
     p.camOn = !!ligada;
-    broadcastEstado();
+    broadcastEstado(p.salaId);
   });
 
-  // Chat — sala única, mensagem vale pra todo mundo
+  // Chat — vale só pra quem está na mesma sala
   socket.on('mensagem', ({ texto, arquivo } = {}) => {
     const p = players[socket.id];
     if (!p) return;
     if (!texto && !arquivo) return;
-    io.emit('mensagem', {
+    io.to(p.salaId).emit('mensagem', {
       id: socket.id,
       autor: p.name,
       texto: texto ? String(texto).slice(0, 500) : null,
@@ -76,14 +95,15 @@ io.on('connection', (socket) => {
     });
   });
 
-  // Reação rápida (emoji flutuante)
+  // Reação rápida (emoji flutuante) — só pra sala do remetente
   socket.on('reacao', ({ emoji } = {}) => {
     const p = players[socket.id];
     if (!p || !emoji) return;
-    io.emit('reacao', { id: socket.id, autor: p.name, emoji: String(emoji).slice(0, 8) });
+    io.to(p.salaId).emit('reacao', { id: socket.id, autor: p.name, emoji: String(emoji).slice(0, 8) });
   });
 
-  // Sinalização WebRTC (áudio/vídeo) — o servidor só repassa entre os dois lados
+  // Sinalização WebRTC (áudio/vídeo) — o servidor só repassa entre os dois lados,
+  // já é isolado por socket.id, não precisa de sala aqui
   socket.on('webrtc-offer', ({ to, offer } = {}) => {
     if (!to) return;
     io.to(to).emit('webrtc-offer', { from: socket.id, offer });
@@ -98,8 +118,11 @@ io.on('connection', (socket) => {
   });
 
   socket.on('disconnect', () => {
+    const p = players[socket.id];
+    if (!p) return;
+    const salaId = p.salaId;
     delete players[socket.id];
-    broadcastEstado();
+    broadcastEstado(salaId);
   });
 });
 
