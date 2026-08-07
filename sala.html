@@ -778,7 +778,6 @@
     el.btnModeNenhum.classList.toggle('active', mode === 'nenhum');
     el.btnUploadAvatar.style.display = mode === 'avatar' ? 'block' : 'none';
     el.cameraSelect.style.display = 'none';
-    el.btnToggleCam.disabled = mode !== 'camera';
 
     if(mode === 'camera'){
       el.previewAvatarImg.style.display = 'none';
@@ -1322,17 +1321,71 @@
     renderGrid();
   });
 
+  var pedidoCameraEmAndamento = false;
+
   el.btnToggleCam.addEventListener('click', function(){
-    if(state.mode === 'avatar') return;
-    state.camOn = !state.camOn;
-    if(state.localStream){
-      state.localStream.getVideoTracks().forEach(function(t){ t.enabled = state.camOn; });
+    var temTrackDeVideo = state.localStream && state.localStream.getVideoTracks().length > 0;
+
+    if(!temTrackDeVideo){
+      ativarCameraDuranteAChamada();
+      return;
     }
+
+    state.camOn = !state.camOn;
+    state.localStream.getVideoTracks().forEach(function(t){ t.enabled = state.camOn; });
     el.btnToggleCam.classList.toggle('on', state.camOn);
     el.btnToggleCam.classList.toggle('off', !state.camOn);
     if(state.socket && state.socket.connected) state.socket.emit('cam-estado', { ligada:state.camOn });
     renderGrid();
   });
+
+  // pra quem entrou sem câmera (Imagem ou Nenhum) e resolveu ligar durante a chamada —
+  // pede a câmera agora e manda a track nova pras conexões já existentes.
+  function ativarCameraDuranteAChamada(){
+    if(pedidoCameraEmAndamento) return;
+    if(!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia){
+      addSystemMessage('Câmera não disponível neste navegador.');
+      return;
+    }
+    pedidoCameraEmAndamento = true;
+    el.btnToggleCam.disabled = true;
+
+    var constraint = state.selectedCameraId ? { deviceId:{ exact:state.selectedCameraId } } : true;
+    navigator.mediaDevices.getUserMedia({ video:constraint }).then(function(camStream){
+      var videoTrack = camStream.getVideoTracks()[0];
+
+      if(state.localStream){
+        state.localStream.addTrack(videoTrack);
+      } else {
+        state.localStream = camStream;
+      }
+      state.mode = 'camera';
+      state.camOn = true;
+
+      if(!state.isScreenSharing){
+        Object.keys(state.peerConnections).forEach(function(id){
+          var pc = state.peerConnections[id];
+          var sender = pc.getSenders().find(function(s){ return s.track && s.track.kind === 'video'; });
+          if(sender){
+            sender.replaceTrack(videoTrack);
+          } else {
+            pc.addTrack(videoTrack, state.localStream);
+          }
+        });
+      }
+
+      el.btnToggleCam.classList.add('on');
+      el.btnToggleCam.classList.remove('off');
+      if(state.socket && state.socket.connected) state.socket.emit('cam-estado', { ligada:true });
+      addSystemMessage('Você ligou a câmera.');
+      renderGrid();
+    }).catch(function(){
+      addSystemMessage('Não foi possível ligar a câmera — verifique as permissões.');
+    }).finally(function(){
+      pedidoCameraEmAndamento = false;
+      el.btnToggleCam.disabled = false;
+    });
+  }
 
   var pedidoTelaEmAndamento = false;
 
@@ -1416,7 +1469,7 @@
     });
 
     el.btnScreenshare.classList.remove('on');
-    el.btnToggleCam.disabled = state.mode !== 'camera';
+    el.btnToggleCam.disabled = false;
     if(state.socket && state.socket.connected) state.socket.emit('tela-estado', { compartilhando:false });
     renderGrid();
   }
@@ -1426,10 +1479,36 @@
     else iniciarCompartilhamentoTela();
   });
 
+  var cameraLigadaAntesDeAusentar = false;
+
   el.btnAusente.addEventListener('click', function(){
     state.ausente = !state.ausente;
     el.btnAusente.classList.toggle('away', state.ausente);
     el.btnAusente.title = state.ausente ? 'Marcar como de volta' : 'Marcar como ausente / volto logo';
+
+    var temTrackDeVideo = state.localStream && state.localStream.getVideoTracks().length > 0;
+
+    if(state.ausente){
+      cameraLigadaAntesDeAusentar = state.camOn;
+      if(temTrackDeVideo && state.camOn){
+        state.camOn = false;
+        state.localStream.getVideoTracks().forEach(function(t){ t.enabled = false; });
+        el.btnToggleCam.classList.remove('on');
+        el.btnToggleCam.classList.add('off');
+        if(state.socket && state.socket.connected) state.socket.emit('cam-estado', { ligada:false });
+      }
+      el.btnToggleCam.disabled = true;
+    } else {
+      el.btnToggleCam.disabled = false;
+      if(temTrackDeVideo && cameraLigadaAntesDeAusentar){
+        state.camOn = true;
+        state.localStream.getVideoTracks().forEach(function(t){ t.enabled = true; });
+        el.btnToggleCam.classList.add('on');
+        el.btnToggleCam.classList.remove('off');
+        if(state.socket && state.socket.connected) state.socket.emit('cam-estado', { ligada:true });
+      }
+    }
+
     if(state.socket && state.socket.connected){
       state.socket.emit('ausente-estado', { ausente:state.ausente });
     }
