@@ -647,6 +647,7 @@
     socket:null,
     myId:null,
     salaId:null,          // código da sala (isola quem entra por links diferentes)
+    souCriadorDaSala:false, // true só pra quem gerou o código agora (não veio de um link)
     players:{},          // { id: {name, mode, avatarDataUrl, micOn, camOn, telaCompartilhada} }, vem do servidor
     peerConnections:{},  // id -> RTCPeerConnection
     remoteStreams:{},    // id -> MediaStream
@@ -660,8 +661,10 @@
     var salaDaUrl = params.get('sala');
     if(salaDaUrl && /^[a-z0-9-]{3,40}$/i.test(salaDaUrl)){
       state.salaId = salaDaUrl.toLowerCase();
+      state.souCriadorDaSala = false; // entrou por um link já pronto
     } else {
       state.salaId = gerarCodigoDeSala();
+      state.souCriadorDaSala = true; // ninguém passou código, essa sala nasceu agora
       params.set('sala', state.salaId);
       var novaUrl = window.location.pathname + '?' + params.toString();
       window.history.replaceState({}, '', novaUrl);
@@ -1042,6 +1045,7 @@
     el.screenRoom.classList.add('active');
     var nomeEl = document.querySelector('.room-name');
     if(nomeEl) nomeEl.textContent = 'Sala #' + state.salaId;
+    el.btnCopyLink.style.display = state.souCriadorDaSala ? '' : 'none';
     renderGrid();
     setupAudioMeter('self', state.localStream);
 
