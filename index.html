@@ -1160,10 +1160,12 @@
     };
 
     if(initiator){
+      pc.getTransceivers().forEach(function(t){ if(t.direction !== 'sendrecv') t.direction = 'sendrecv'; });
       pc.createOffer().then(function(offer){
         return pc.setLocalDescription(offer);
       }).then(function(){
         state.socket.emit('webrtc-offer', { to:peerId, offer:pc.localDescription });
+        console.log('[DIAG] oferta enviada p/ ' + peerId + ' | transceivers=' + JSON.stringify(pc.getTransceivers().map(function(t){ return { kind:(t.sender&&t.sender.track?t.sender.track.kind:(t.receiver&&t.receiver.track?t.receiver.track.kind:'?')), direction:t.direction, currentDirection:t.currentDirection }; })));
       });
     }
 
@@ -1173,11 +1175,13 @@
   function onWebrtcOffer(data){
     var pc = state.peerConnections[data.from] || createPeerConnection(data.from, false);
     pc.setRemoteDescription(new RTCSessionDescription(data.offer)).then(function(){
+      pc.getTransceivers().forEach(function(t){ if(t.direction !== 'sendrecv') t.direction = 'sendrecv'; });
       return pc.createAnswer();
     }).then(function(answer){
       return pc.setLocalDescription(answer);
     }).then(function(){
       state.socket.emit('webrtc-answer', { to:data.from, answer:pc.localDescription });
+      console.log('[DIAG] resposta enviada p/ ' + data.from + ' | transceivers=' + JSON.stringify(pc.getTransceivers().map(function(t){ return { kind:(t.sender&&t.sender.track?t.sender.track.kind:(t.receiver&&t.receiver.track?t.receiver.track.kind:'?')), direction:t.direction, currentDirection:t.currentDirection }; })));
     });
   }
 
