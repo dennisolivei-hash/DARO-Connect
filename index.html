@@ -224,6 +224,8 @@
     transition:all .15s; position:relative;
   }
   .icon-btn:hover{ border-color:var(--cyan-500); color:var(--cyan-400); }
+  .icon-btn:disabled{ opacity:.35; cursor:not-allowed; }
+  .icon-btn:disabled:hover{ border-color:var(--navy-600); color:var(--text-mid); }
   .icon-btn.danger{ border-color:var(--coral-600); color:var(--coral-500); }
   .icon-btn.danger:hover{ background:var(--coral-600); color:#fff; }
   .icon-btn.on{ border-color:var(--cyan-500); color:var(--cyan-400); background:rgba(30,200,232,0.12); }
@@ -336,6 +338,12 @@
     clip-path:polygon(4px 0,100% 0,100% calc(100% - 4px),calc(100% - 4px) 100%,0 100%,0 4px);
   }
   .attach-preview button{ margin-left:auto; background:none; border:none; color:var(--coral-500); cursor:pointer; font-size:13px; }
+  .attach-preview.error{ color:var(--danger); border-color:var(--danger); }
+
+  .demo-banner{
+    background:rgba(255,106,85,0.12); border-bottom:1px solid var(--coral-600); color:var(--coral-500);
+    font-size:11.5px; text-align:center; padding:7px 10px; letter-spacing:.3px;
+  }
 
   .chat-input-row{ display:flex; align-items:center; gap:6px; }
   .chat-input-row input[type=text]{
@@ -536,6 +544,7 @@
 
 </div>
 
+<script src="https://cdnjs.cloudflare.com/ajax/libs/socket.io/4.7.5/socket.io.min.js"></script>
 <script>
 (function(){
   "use strict";
@@ -545,18 +554,47 @@
     { name:"Ana Ferreira", initials:"AF" },
     { name:"Bruno Costa", initials:"BC" }
   ];
+  var ICE_SERVERS = { iceServers:[{ urls:'stun:stun.l.google.com:19302' }] };
+  var MAX_FILE_BYTES = 5 * 1024 * 1024; // 5MB
 
   var state = {
     name:"",
     mode:"camera", // 'camera' | 'avatar'
-    stream:null,
+    previewStream:null,   // câmera usada só na pré-visualização da tela de entrada
+    localStream:null,     // stream real usada na chamada (áudio [+vídeo])
     avatarDataUrl:null,
     micOn:true,
     camOn:true,
     chatOpen:true,
     unread:0,
-    pendingAttachment:null
+    pendingAttachment:null,
+
+    configPromise:null,
+    serverUrl:null,
+    demoMode:false,
+    usedFallback:false,
+
+    socket:null,
+    myId:null,
+    players:{},          // { id: {name, mode, avatarDataUrl, micOn, camOn} }, vem do servidor
+    peerConnections:{},  // id -> RTCPeerConnection
+    remoteStreams:{},    // id -> MediaStream
+    audioMeters:{}       // id -> { ctx, raf }
   };
+
+  // busca o config.json (com a URL do túnel) assim que a página carrega,
+  // em paralelo com a pessoa preenchendo o formulário de entrada
+  state.configPromise = fetch('config.json', { cache:'no-store' })
+    .then(function(r){ return r.ok ? r.json() : {}; })
+    .catch(function(){ return {}; })
+    .then(function(cfg){
+      var url = cfg && cfg.serverUrl;
+      if(url && /^https?:\/\//i.test(url)){
+        state.serverUrl = url;
+      } else {
+        state.demoMode = true;
+      }
+    });
 
   // ---------- element refs ----------
   var el = {
@@ -623,12 +661,13 @@
     el.btnModeCamera.classList.toggle('active', mode === 'camera');
     el.btnModeAvatar.classList.toggle('active', mode === 'avatar');
     el.btnUploadAvatar.style.display = mode === 'avatar' ? 'block' : 'none';
+    el.btnToggleCam.disabled = mode === 'avatar';
 
     if(mode === 'camera'){
       el.previewAvatarImg.style.display = 'none';
       startLocalCamera();
     } else {
-      stopLocalCamera();
+      stopPreviewCamera();
       el.previewVideo.style.display = 'none';
       if(state.avatarDataUrl){
         el.previewAvatarImg.src = state.avatarDataUrl;
@@ -665,14 +704,14 @@
       el.previewPlaceholderText.textContent = 'Câmera não disponível neste navegador';
       return;
     }
-    if(state.stream){
-      el.previewVideo.srcObject = state.stream;
+    if(state.previewStream){
+      el.previewVideo.srcObject = state.previewStream;
       el.previewVideo.style.display = 'block';
       el.previewPlaceholder.style.display = 'none';
       return;
     }
     navigator.mediaDevices.getUserMedia({ video:true, audio:false }).then(function(stream){
-      state.stream = stream;
+      state.previewStream = stream;
       el.previewVideo.srcObject = stream;
       el.previewVideo.style.display = 'block';
       el.previewPlaceholder.style.display = 'none';
@@ -682,10 +721,10 @@
     });
   }
 
-  function stopLocalCamera(){
-    if(state.stream){
-      state.stream.getTracks().forEach(function(t){ t.stop(); });
-      state.stream = null;
+  function stopPreviewCamera(){
+    if(state.previewStream){
+      state.previewStream.getTracks().forEach(function(t){ t.stop(); });
+      state.previewStream = null;
     }
   }
 
@@ -702,16 +741,49 @@
     }
     el.hintError.style.display = 'none';
     state.name = name;
-    enterRoom();
+    el.btnEnter.disabled = true;
+    acquireCallMediaAndEnter();
   });
   el.inputName.addEventListener('keydown', function(e){
     if(e.key === 'Enter') el.btnEnter.click();
   });
 
+  function acquireCallMediaAndEnter(){
+    stopPreviewCamera();
+
+    if(!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia){
+      state.localStream = null;
+      proceedToRoom();
+      return;
+    }
+
+    var constraints = state.mode === 'camera' ? { audio:true, video:true } : { audio:true, video:false };
+    navigator.mediaDevices.getUserMedia(constraints).then(function(stream){
+      state.localStream = stream;
+      proceedToRoom();
+    }).catch(function(){
+      // se pediu câmera e falhou (sem webcam, permissão negada etc.), tenta só o áudio
+      if(state.mode === 'camera'){
+        navigator.mediaDevices.getUserMedia({ audio:true }).then(function(s){
+          state.localStream = s;
+          state.camOn = false;
+          proceedToRoom();
+        }).catch(function(){
+          state.localStream = null;
+          proceedToRoom();
+        });
+      } else {
+        state.localStream = null;
+        proceedToRoom();
+      }
+    });
+  }
+
   // ---------- room ----------
   function buildTile(opts){
     var tile = document.createElement('div');
-    tile.className = 'tile' + (opts.self ? ' self' : '') + (opts.speaking ? ' speaking' : '');
+    tile.className = 'tile' + (opts.self ? ' self' : '');
+    tile.dataset.tileId = opts.id;
 
     var brackets = document.createElement('div');
     brackets.className = 'corner-brackets';
@@ -720,7 +792,7 @@
 
     if(opts.videoStream){
       var v = document.createElement('video');
-      v.autoplay = true; v.muted = true; v.playsInline = true;
+      v.autoplay = true; v.muted = !!opts.self; v.playsInline = true;
       v.srcObject = opts.videoStream;
       tile.appendChild(v);
     } else {
@@ -747,9 +819,9 @@
   function renderGrid(){
     el.videoGrid.innerHTML = '';
 
-    var selfOpts = { self:true, name:state.name || 'Você', micOff:!state.micOn };
-    if(state.mode === 'camera' && state.camOn && state.stream){
-      selfOpts.videoStream = state.stream;
+    var selfOpts = { self:true, id:'self', name:state.name || 'Você', micOff:!state.micOn };
+    if(state.mode === 'camera' && state.camOn && state.localStream && state.localStream.getVideoTracks().length){
+      selfOpts.videoStream = state.localStream;
     } else if(state.mode === 'avatar' && state.avatarDataUrl){
       selfOpts.imgSrc = state.avatarDataUrl;
     } else {
@@ -757,45 +829,257 @@
     }
     el.videoGrid.appendChild(buildTile(selfOpts));
 
-    MOCK_PEOPLE.forEach(function(p, i){
-      el.videoGrid.appendChild(buildTile({
-        name:p.name,
-        initials:p.initials,
-        speaking:i === 0,
-        micOff:false
-      }));
+    if(state.demoMode){
+      MOCK_PEOPLE.forEach(function(p, i){
+        el.videoGrid.appendChild(buildTile({ id:'mock'+i, name:p.name, initials:p.initials, micOff:false }));
+      });
+      el.participantCount.textContent = (MOCK_PEOPLE.length + 1) + ' participantes (demonstração)';
+      return;
+    }
+
+    var ids = Object.keys(state.players);
+    ids.forEach(function(id){
+      if(id === state.myId) return;
+      var p = state.players[id];
+      var remoteStream = state.remoteStreams[id];
+      var opts = { id:id, name:p.name, micOff:!p.micOn };
+      if(p.mode === 'camera' && p.camOn && remoteStream && remoteStream.getVideoTracks().length){
+        opts.videoStream = remoteStream;
+      } else if(p.mode === 'avatar' && p.avatarDataUrl){
+        opts.imgSrc = p.avatarDataUrl;
+      } else {
+        opts.initials = initials(p.name || '?');
+      }
+      el.videoGrid.appendChild(buildTile(opts));
     });
 
-    el.participantCount.textContent = (MOCK_PEOPLE.length + 1) + ' participantes';
+    var total = ids.length || 1;
+    el.participantCount.textContent = total + (total === 1 ? ' participante' : ' participantes');
   }
 
-  function enterRoom(){
+  function proceedToRoom(){
     el.screenEntry.classList.remove('active');
     el.screenRoom.classList.add('active');
-
-    if(state.mode === 'camera' && !state.stream){
-      startLocalCamera();
-    }
     renderGrid();
+    setupAudioMeter('self', state.localStream);
 
-    addSystemMessage('Você entrou na sala.');
+    state.configPromise.then(function(){
+      if(state.demoMode || !state.serverUrl){
+        runDemoMode();
+      } else {
+        connectSocket();
+      }
+    });
+  }
+
+  function runDemoMode(){
+    state.demoMode = true;
+    showDemoBanner();
+    renderGrid();
+    addSystemMessage('Modo demonstração — o backend ainda não está conectado.');
     setTimeout(function(){
       addChatMessage({ name:'Ana Ferreira', own:false, text:'Oi! Bem-vindo à sala 👋' });
     }, 900);
   }
 
+  function showDemoBanner(){
+    if(document.getElementById('demo-banner')) return;
+    var b = document.createElement('div');
+    b.id = 'demo-banner';
+    b.className = 'demo-banner';
+    b.textContent = 'Modo demonstração — backend ainda não conectado. Vídeo e chat funcionam só localmente.';
+    el.screenRoom.insertBefore(b, el.screenRoom.firstChild);
+  }
+
+  function hideDemoBanner(){
+    var b = document.getElementById('demo-banner');
+    if(b) b.remove();
+  }
+
+  // ---------- Socket.io + WebRTC ----------
+  function connectSocket(){
+    if(typeof io === 'undefined'){
+      addSystemMessage('Biblioteca de conexão não carregou.');
+      runDemoMode();
+      return;
+    }
+
+    var socket = io(state.serverUrl, { transports:['websocket','polling'], timeout:6000 });
+    state.socket = socket;
+
+    socket.on('connect', function(){
+      state.myId = socket.id;
+      hideDemoBanner();
+      socket.emit('entrar', {
+        nome:state.name,
+        modo:state.mode,
+        avatarDataUrl: state.mode === 'avatar' ? state.avatarDataUrl : null
+      });
+      addSystemMessage('Você entrou na sala.');
+    });
+
+    socket.on('connect_error', function(){
+      if(!state.usedFallback){
+        state.usedFallback = true;
+        addSystemMessage('Não foi possível conectar ao servidor — mostrando modo demonstração.');
+        runDemoMode();
+      }
+    });
+
+    socket.on('disconnect', function(){
+      addSystemMessage('Conexão com o servidor perdida.');
+    });
+
+    socket.on('estado', onEstadoUpdate);
+    socket.on('mensagem', onMensagem);
+    socket.on('reacao', onReacao);
+    socket.on('webrtc-offer', onWebrtcOffer);
+    socket.on('webrtc-answer', onWebrtcAnswer);
+    socket.on('webrtc-ice', onWebrtcIce);
+  }
+
+  function onEstadoUpdate(playersDict){
+    var prevIds = Object.keys(state.players);
+    var newIds = Object.keys(playersDict);
+    state.players = playersDict;
+
+    newIds.forEach(function(id){
+      if(id === state.myId) return;
+      if(!state.peerConnections[id]){
+        var initiator = state.myId < id;
+        createPeerConnection(id, initiator);
+      }
+    });
+
+    prevIds.forEach(function(id){
+      if(newIds.indexOf(id) === -1 && state.peerConnections[id]){
+        closePeerConnection(id);
+      }
+    });
+
+    renderGrid();
+  }
+
+  function createPeerConnection(peerId, initiator){
+    var pc = new RTCPeerConnection(ICE_SERVERS);
+    state.peerConnections[peerId] = pc;
+
+    if(state.localStream){
+      state.localStream.getTracks().forEach(function(track){
+        pc.addTrack(track, state.localStream);
+      });
+    }
+
+    pc.onicecandidate = function(e){
+      if(e.candidate) state.socket.emit('webrtc-ice', { to:peerId, candidate:e.candidate });
+    };
+
+    pc.ontrack = function(e){
+      state.remoteStreams[peerId] = e.streams[0];
+      setupAudioMeter(peerId, e.streams[0]);
+      renderGrid();
+    };
+
+    if(initiator){
+      pc.createOffer().then(function(offer){
+        return pc.setLocalDescription(offer);
+      }).then(function(){
+        state.socket.emit('webrtc-offer', { to:peerId, offer:pc.localDescription });
+      });
+    }
+
+    return pc;
+  }
+
+  function onWebrtcOffer(data){
+    var pc = state.peerConnections[data.from] || createPeerConnection(data.from, false);
+    pc.setRemoteDescription(new RTCSessionDescription(data.offer)).then(function(){
+      return pc.createAnswer();
+    }).then(function(answer){
+      return pc.setLocalDescription(answer);
+    }).then(function(){
+      state.socket.emit('webrtc-answer', { to:data.from, answer:pc.localDescription });
+    });
+  }
+
+  function onWebrtcAnswer(data){
+    var pc = state.peerConnections[data.from];
+    if(pc) pc.setRemoteDescription(new RTCSessionDescription(data.answer));
+  }
+
+  function onWebrtcIce(data){
+    var pc = state.peerConnections[data.from];
+    if(pc && data.candidate){
+      pc.addIceCandidate(new RTCIceCandidate(data.candidate)).catch(function(){});
+    }
+  }
+
+  function closePeerConnection(id){
+    var pc = state.peerConnections[id];
+    if(pc){ pc.close(); delete state.peerConnections[id]; }
+    delete state.remoteStreams[id];
+    teardownAudioMeter(id);
+  }
+
+  // ---------- indicador de fala (Web Audio) ----------
+  function setupAudioMeter(id, stream){
+    teardownAudioMeter(id);
+    if(!stream || !stream.getAudioTracks().length) return;
+    try{
+      var AudioCtx = window.AudioContext || window.webkitAudioContext;
+      var ctx = new AudioCtx();
+      var source = ctx.createMediaStreamSource(stream);
+      var analyser = ctx.createAnalyser();
+      analyser.fftSize = 512;
+      source.connect(analyser);
+      var data = new Uint8Array(analyser.frequencyBinCount);
+
+      state.audioMeters[id] = { ctx:ctx, raf:null };
+
+      function tick(){
+        if(!state.audioMeters[id]) return;
+        analyser.getByteFrequencyData(data);
+        var sum = 0;
+        for(var i=0;i<data.length;i++) sum += data[i];
+        var avg = sum / data.length;
+        var tileEl = document.querySelector('[data-tile-id="'+id+'"]');
+        if(tileEl) tileEl.classList.toggle('speaking', avg > 18);
+        state.audioMeters[id].raf = requestAnimationFrame(tick);
+      }
+      tick();
+    }catch(e){ /* Web Audio indisponível — segue sem o indicador de fala */ }
+  }
+
+  function teardownAudioMeter(id){
+    var m = state.audioMeters[id];
+    if(m){
+      if(m.raf) cancelAnimationFrame(m.raf);
+      if(m.ctx) m.ctx.close();
+      delete state.audioMeters[id];
+    }
+  }
+
   // ---------- controls ----------
   el.btnToggleMic.addEventListener('click', function(){
     state.micOn = !state.micOn;
+    if(state.localStream){
+      state.localStream.getAudioTracks().forEach(function(t){ t.enabled = state.micOn; });
+    }
     el.btnToggleMic.classList.toggle('on', state.micOn);
     el.btnToggleMic.classList.toggle('off', !state.micOn);
+    if(state.socket && state.socket.connected) state.socket.emit('mic-estado', { ligado:state.micOn });
     renderGrid();
   });
 
   el.btnToggleCam.addEventListener('click', function(){
+    if(state.mode === 'avatar') return;
     state.camOn = !state.camOn;
+    if(state.localStream){
+      state.localStream.getVideoTracks().forEach(function(t){ t.enabled = state.camOn; });
+    }
     el.btnToggleCam.classList.toggle('on', state.camOn);
     el.btnToggleCam.classList.toggle('off', !state.camOn);
+    if(state.socket && state.socket.connected) state.socket.emit('cam-estado', { ligada:state.camOn });
     renderGrid();
   });
 
@@ -804,12 +1088,39 @@
   });
 
   el.btnLeave.addEventListener('click', function(){
-    stopLocalCamera();
+    leaveRoom();
+  });
+
+  function leaveRoom(){
+    Object.keys(state.peerConnections).forEach(closePeerConnection);
+    teardownAudioMeter('self');
+
+    if(state.localStream){
+      state.localStream.getTracks().forEach(function(t){ t.stop(); });
+      state.localStream = null;
+    }
+    if(state.socket){
+      state.socket.disconnect();
+      state.socket = null;
+    }
+
+    state.players = {};
+    state.remoteStreams = {};
+    state.myId = null;
+    state.demoMode = false;
+    state.usedFallback = false;
+
+    hideDemoBanner();
     el.screenRoom.classList.remove('active');
     el.screenEntry.classList.add('active');
     el.chatMessages.innerHTML = '';
+    el.btnEnter.disabled = false;
+    el.btnToggleCam.disabled = false;
+    el.btnToggleMic.classList.add('on'); el.btnToggleMic.classList.remove('off');
+    el.btnToggleCam.classList.add('on'); el.btnToggleCam.classList.remove('off');
+    state.micOn = true; state.camOn = true;
     setMode(state.mode);
-  });
+  }
 
   // ---------- chat panel toggle ----------
   function setChatOpen(open){
@@ -865,8 +1176,14 @@
       bubble.appendChild(img);
     }
     if(opts.fileName && !opts.imageDataUrl){
-      var chip = document.createElement('div');
+      var chip = document.createElement(opts.fileUrl ? 'a' : 'div');
       chip.className = 'file-chip';
+      if(opts.fileUrl){
+        chip.href = opts.fileUrl;
+        chip.download = opts.fileName;
+        chip.style.textDecoration = 'none';
+        chip.style.color = 'inherit';
+      }
       chip.innerHTML = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8z"/><path d="M14 2v6h6"/></svg><span>' + escapeHtml(opts.fileName) + '</span>';
       bubble.appendChild(chip);
     }
@@ -894,21 +1211,48 @@
     var attachment = state.pendingAttachment;
     if(!text && !attachment) return;
 
+    var connected = state.socket && state.socket.connected;
+
+    if(connected){
+      var arquivo = null;
+      if(attachment){
+        arquivo = {
+          nome: attachment.file.name,
+          isImage: attachment.isImage,
+          dataUrl: attachment.dataUrl
+        };
+      }
+      state.socket.emit('mensagem', { texto:text || null, arquivo:arquivo });
+      el.chatTextInput.value = '';
+      clearAttachment();
+      return;
+    }
+
+    // modo demonstração — eco local, sem servidor
     var payload = { name:state.name || 'Você', own:true, text:text || null };
     if(attachment){
       if(attachment.isImage) payload.imageDataUrl = attachment.dataUrl;
-      payload.fileName = attachment.file.name;
+      else { payload.fileName = attachment.file.name; payload.fileUrl = attachment.dataUrl; }
     }
     addChatMessage(payload);
-
     el.chatTextInput.value = '';
     clearAttachment();
 
-    // mock reply for visual demonstration
-    setTimeout(function(){
-      var replies = ['Combinado 👍','Recebido, obrigado!','Boa, vou dar uma olhada.','👏'];
-      addChatMessage({ name:MOCK_PEOPLE[Math.floor(Math.random()*MOCK_PEOPLE.length)].name, own:false, text: replies[Math.floor(Math.random()*replies.length)] });
-    }, 1100 + Math.random()*900);
+    if(state.demoMode){
+      setTimeout(function(){
+        var replies = ['Combinado 👍','Recebido, obrigado!','Boa, vou dar uma olhada.','👏'];
+        addChatMessage({ name:MOCK_PEOPLE[Math.floor(Math.random()*MOCK_PEOPLE.length)].name, own:false, text: replies[Math.floor(Math.random()*replies.length)] });
+      }, 1100 + Math.random()*900);
+    }
+  }
+
+  function onMensagem(data){
+    var payload = { name:data.autor, own:(data.id === state.myId), text:data.texto };
+    if(data.arquivo){
+      if(data.arquivo.isImage) payload.imageDataUrl = data.arquivo.dataUrl;
+      else { payload.fileName = data.arquivo.nome; payload.fileUrl = data.arquivo.dataUrl; }
+    }
+    addChatMessage(payload);
   }
 
   el.btnSend.addEventListener('click', sendMessage);
@@ -921,28 +1265,32 @@
   el.chatFileInput.addEventListener('change', function(e){
     var file = e.target.files && e.target.files[0];
     if(!file) return;
-    var isImage = file.type.indexOf('image/') === 0;
 
-    if(isImage){
-      var reader = new FileReader();
-      reader.onload = function(ev){
-        state.pendingAttachment = { file:file, isImage:true, dataUrl:ev.target.result };
-        showAttachPreview(file.name);
-      };
-      reader.readAsDataURL(file);
-    } else {
-      state.pendingAttachment = { file:file, isImage:false, dataUrl:null };
-      showAttachPreview(file.name);
+    if(file.size > MAX_FILE_BYTES){
+      showAttachPreview(file.name + ' — arquivo muito grande (máx. 5MB)', true);
+      state.pendingAttachment = null;
+      el.chatFileInput.value = '';
+      return;
     }
+
+    var isImage = file.type.indexOf('image/') === 0;
+    var reader = new FileReader();
+    reader.onload = function(ev){
+      state.pendingAttachment = { file:file, isImage:isImage, dataUrl:ev.target.result };
+      showAttachPreview(file.name, false);
+    };
+    reader.readAsDataURL(file);
   });
 
-  function showAttachPreview(name){
+  function showAttachPreview(name, isError){
     el.attachPreviewName.textContent = name;
     el.attachPreview.style.display = 'flex';
+    el.attachPreview.classList.toggle('error', !!isError);
   }
   function clearAttachment(){
     state.pendingAttachment = null;
     el.attachPreview.style.display = 'none';
+    el.attachPreview.classList.remove('error');
     el.chatFileInput.value = '';
   }
   el.btnRemoveAttach.addEventListener('click', clearAttachment);
@@ -973,16 +1321,31 @@
   });
 
   // ---------- quick floating reaction ----------
-  el.btnQuickEmoji.addEventListener('click', function(e){
-    var em = EMOJIS[Math.floor(Math.random()*EMOJIS.length)];
+  function spawnFloatingEmoji(emoji, x, y){
     var span = document.createElement('span');
     span.className = 'emoji-float';
-    span.textContent = em;
-    var rect = el.btnQuickEmoji.getBoundingClientRect();
-    span.style.left = (rect.left + rect.width/2 - 13) + 'px';
-    span.style.top = (rect.top - 10) + 'px';
+    span.textContent = emoji;
+    span.style.left = x + 'px';
+    span.style.top = y + 'px';
     document.body.appendChild(span);
     setTimeout(function(){ span.remove(); }, 1700);
+  }
+
+  function onReacao(data){
+    var tileId = data.id === state.myId ? 'self' : data.id;
+    var tileEl = document.querySelector('[data-tile-id="'+tileId+'"]');
+    var rect = tileEl ? tileEl.getBoundingClientRect() : el.btnQuickEmoji.getBoundingClientRect();
+    spawnFloatingEmoji(data.emoji, rect.left + rect.width/2 - 13, rect.top + 10);
+  }
+
+  el.btnQuickEmoji.addEventListener('click', function(){
+    var em = EMOJIS[Math.floor(Math.random()*EMOJIS.length)];
+    if(state.socket && state.socket.connected){
+      state.socket.emit('reacao', { emoji:em });
+    } else {
+      var rect = el.btnQuickEmoji.getBoundingClientRect();
+      spawnFloatingEmoji(em, rect.left + rect.width/2 - 13, rect.top - 10);
+    }
   });
 
 })();
