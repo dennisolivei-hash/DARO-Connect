@@ -1121,9 +1121,16 @@
 
     if(state.localStream){
       state.localStream.getTracks().forEach(function(track){
+        if(track.kind === 'video' && state.isScreenSharing){
+          return; // a track de vídeo enviada agora é a da tela, adicionada abaixo
+        }
         pc.addTrack(track, state.localStream);
       });
       console.log('[DIAG] tracks locais anexadas pra ' + peerId + ': ' + state.localStream.getTracks().map(function(t){return t.kind;}).join(','));
+    }
+    if(state.isScreenSharing && state.screenStream && state.screenStream.getVideoTracks().length){
+      pc.addTrack(state.screenStream.getVideoTracks()[0], state.screenStream);
+      console.log('[DIAG] já estava compartilhando tela — anexei a track de tela de cara pra ' + peerId);
     }
 
     pc.onicecandidate = function(e){
