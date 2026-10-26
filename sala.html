@@ -463,6 +463,33 @@
     .emoji-float{ animation:none; }
   }
 
+  /* ---------- gravação da reunião ---------- */
+  .rec-btn svg .rec-dot{ fill:currentColor; stroke:none; }
+  .icon-btn.gravando{
+    border-color:var(--danger); color:#fff; background:var(--danger);
+    animation:recPulse 1.4s ease-in-out infinite;
+  }
+  .icon-btn.gravando:hover{ border-color:var(--danger); color:#fff; background:var(--coral-600); }
+  @keyframes recPulse{ 0%,100%{ filter:none; } 50%{ filter:brightness(1.3); } }
+
+  .rec-indicator{
+    display:flex; align-items:center; gap:8px; height:36px; padding:0 12px; max-width:260px;
+    font-family:'JetBrains Mono', monospace; font-size:11.5px; font-weight:500; letter-spacing:.6px;
+    color:var(--danger); border:1px solid var(--danger); background:rgba(255,92,92,0.12);
+    clip-path:polygon(6px 0,100% 0,100% calc(100% - 6px),calc(100% - 6px) 100%,0 100%,0 6px);
+    white-space:nowrap;
+  }
+  .rec-indicator .rec-led{
+    width:8px; height:8px; border-radius:50%; background:var(--danger); flex-shrink:0;
+    box-shadow:0 0 8px var(--danger); animation:recBlink 1.2s ease-in-out infinite;
+  }
+  .rec-indicator .rec-text{ overflow:hidden; text-overflow:ellipsis; }
+  @keyframes recBlink{ 0%,100%{ opacity:1; } 50%{ opacity:.25; } }
+  @media (max-width:560px){ .rec-indicator{ max-width:150px; padding:0 9px; } }
+  @media (prefers-reduced-motion:reduce){
+    .icon-btn.gravando, .rec-indicator .rec-led{ animation:none; }
+  }
+
   [hidden]{ display:none !important; }
 </style>
 </head>
@@ -541,6 +568,9 @@
         </div>
       </div>
       <div class="room-header-right">
+        <div class="rec-indicator" id="rec-indicator" role="status" aria-live="polite" hidden>
+          <span class="rec-led"></span><span class="rec-text" id="rec-indicator-text">GRAVANDO</span>
+        </div>
         <button class="icon-btn copy-link-btn" id="btn-copy-link" title="Copiar link da sala">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M10 13a5 5 0 007.07 0l2.83-2.83a5 5 0 00-7.07-7.07L11.5 4.5"/><path d="M14 11a5 5 0 00-7.07 0L4.1 13.83a5 5 0 007.07 7.07L12.5 19.5"/></svg>
           <span class="copy-link-label">Copiar link</span>
@@ -612,6 +642,9 @@
       <button class="icon-btn" id="btn-ausente" title="Marcar como ausente / volto logo">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><path d="M12 6v6l4 2"/></svg>
       </button>
+      <button class="icon-btn rec-btn" id="btn-gravar" title="Gravar reunião">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><circle class="rec-dot" cx="12" cy="12" r="4.5"/></svg>
+      </button>
       <div class="reaction-popup" id="reaction-popup"></div>
       <button class="leave-btn" id="btn-leave">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><path d="M10.68 13.31a16 16 0 003.41 2.6l1-1a1 1 0 011.09-.21 11.4 11.4 0 003.6.57 1 1 0 011 1V19a1 1 0 01-1 1A17 17 0 013 4a1 1 0 011-1h2.72a1 1 0 011 1 11.4 11.4 0 00.57 3.6 1 1 0 01-.25 1l-1.04 1.09"/><line x1="2" y1="2" x2="22" y2="22"/></svg>
@@ -664,7 +697,10 @@
     players:{},          // { id: {name, mode, avatarDataUrl, micOn, camOn, telaCompartilhada} }, vem do servidor
     peerConnections:{},  // id -> RTCPeerConnection
     remoteStreams:{},    // id -> MediaStream
-    audioMeters:{}       // id -> { ctx, raf }
+    audioMeters:{},      // id -> { ctx, raf }
+
+    gravacao:null,       // gravação local em andamento (só de quem clicou em gravar)
+    gravandoRemoto:{}    // id -> nome de quem está gravando a reunião (outros participantes)
   };
 
   // define a sala: usa o código já presente no link (?sala=xxxx), ou gera um novo
@@ -752,6 +788,9 @@
     btnScreenshare:document.getElementById('btn-screenshare'),
     btnQuickEmoji:document.getElementById('btn-quick-emoji'),
     btnAusente:document.getElementById('btn-ausente'),
+    btnGravar:document.getElementById('btn-gravar'),
+    recIndicator:document.getElementById('rec-indicator'),
+    recIndicatorText:document.getElementById('rec-indicator-text'),
     reactionPopup:document.getElementById('reaction-popup'),
     btnLeave:document.getElementById('btn-leave')
   };
@@ -1175,6 +1214,18 @@
       }
     });
 
+    // quem estava gravando e saiu da sala: tira o aviso de gravação dele
+    Object.keys(state.gravandoRemoto).forEach(function(id){
+      if(newIds.indexOf(id) === -1) delete state.gravandoRemoto[id];
+    });
+    atualizarIndicadorGravacao();
+
+    // estou gravando e chegou alguém novo: avisa essa pessoa que a reunião está sendo gravada
+    if(state.gravacao && prevIds.length){
+      var chegouAlguem = newIds.some(function(id){ return id !== state.myId && prevIds.indexOf(id) === -1; });
+      if(chegouAlguem) anunciarGravacao(true, ' está gravando esta reunião.');
+    }
+
     renderGrid();
   }
 
@@ -1521,6 +1572,11 @@
   });
 
   function leaveRoom(){
+    // saiu com gravação ligada: encerra e baixa o arquivo antes de desligar tudo
+    pararGravacao();
+    state.gravandoRemoto = {};
+    atualizarIndicadorGravacao();
+
     Object.keys(state.peerConnections).forEach(closePeerConnection);
     teardownAudioMeter('self');
 
@@ -1561,6 +1617,354 @@
     state.micOn = true; state.camOn = true;
     setMode(state.mode);
   }
+
+  // ---------- gravação da reunião ----------
+  // Grava, no computador de quem clicou, um vídeo com todos os quadros da sala
+  // (montados num canvas) + o áudio de todos os participantes misturado.
+  // O arquivo é baixado ao parar. Todos na sala recebem o aviso de gravação.
+  var MARCA_GRAV_INICIO = '🔴 [GRAVAÇÃO] ';
+  var MARCA_GRAV_FIM = '⏹️ [GRAVAÇÃO] ';
+  var GRAV_LARGURA = 1280, GRAV_ALTURA = 720, GRAV_FPS = 30;
+
+  var gravacaoSuportada = !!(window.MediaRecorder && window.HTMLCanvasElement &&
+    HTMLCanvasElement.prototype.captureStream);
+  if(!gravacaoSuportada) el.btnGravar.hidden = true;
+
+  function ehAvisoDeGravacao(texto){
+    return typeof texto === 'string' &&
+      (texto.indexOf(MARCA_GRAV_INICIO) === 0 || texto.indexOf(MARCA_GRAV_FIM) === 0);
+  }
+  function textoDoAvisoDeGravacao(texto){
+    return texto.replace(MARCA_GRAV_INICIO, '🔴 ').replace(MARCA_GRAV_FIM, '⏹️ ');
+  }
+
+  function anunciarGravacao(iniciou, complemento){
+    var texto = (iniciou ? MARCA_GRAV_INICIO : MARCA_GRAV_FIM) + (state.name || 'Alguém') + complemento;
+    if(state.socket && state.socket.connected){
+      state.socket.emit('mensagem', { texto:texto, arquivo:null });
+    } else {
+      addSystemMessage(textoDoAvisoDeGravacao(texto));
+    }
+  }
+
+  function formatarDuracao(ms){
+    var total = Math.max(0, Math.floor(ms / 1000));
+    var h = Math.floor(total / 3600), m = Math.floor((total % 3600) / 60), s = total % 60;
+    var mmss = String(m).padStart(2,'0') + ':' + String(s).padStart(2,'0');
+    return h ? (h + ':' + mmss) : mmss;
+  }
+
+  function atualizarIndicadorGravacao(){
+    var nomes = Object.keys(state.gravandoRemoto).map(function(id){ return state.gravandoRemoto[id]; });
+    if(state.gravacao){
+      el.recIndicator.hidden = false;
+      el.recIndicatorText.textContent = 'GRAVANDO ' + formatarDuracao(Date.now() - state.gravacao.inicio);
+      el.recIndicator.title = 'Você está gravando esta reunião';
+    } else if(nomes.length){
+      el.recIndicator.hidden = false;
+      el.recIndicatorText.textContent = 'GRAVANDO · ' + nomes.join(', ');
+      el.recIndicator.title = 'Esta reunião está sendo gravada por ' + nomes.join(', ');
+    } else {
+      el.recIndicator.hidden = true;
+    }
+  }
+
+  function escolherFormatoGravacao(){
+    var opcoes = [
+      'video/webm;codecs=vp9,opus',
+      'video/webm;codecs=vp8,opus',
+      'video/webm',
+      'video/mp4;codecs=avc1,mp4a',
+      'video/mp4'
+    ];
+    for(var i = 0; i < opcoes.length; i++){
+      if(MediaRecorder.isTypeSupported && MediaRecorder.isTypeSupported(opcoes[i])) return opcoes[i];
+    }
+    return '';
+  }
+
+  // timer rodando num Worker: continua no ritmo certo mesmo se a aba ficar em segundo plano
+  // (setInterval/requestAnimationFrame normais quase param quando a aba não está visível)
+  function criarTicker(fn, ms){
+    try{
+      var codigo = 'var t=null;onmessage=function(e){if(e.data==="parar"){clearInterval(t);close();return;}' +
+                   't=setInterval(function(){postMessage(0);},' + ms + ');};';
+      var url = URL.createObjectURL(new Blob([codigo], { type:'text/javascript' }));
+      var w = new Worker(url);
+      w.onmessage = fn;
+      w.postMessage('iniciar');
+      return { parar:function(){ try{ w.postMessage('parar'); w.terminate(); }catch(e){} URL.revokeObjectURL(url); } };
+    }catch(e){
+      var id = setInterval(fn, ms);
+      return { parar:function(){ clearInterval(id); } };
+    }
+  }
+
+  // liga no mixer o áudio de cada participante (inclusive quem entrou depois de começar a gravar)
+  function conectarAudiosNaGravacao(){
+    var g = state.gravacao;
+    if(!g || !g.audioCtx) return;
+    var streams = {};
+    if(state.localStream) streams.self = state.localStream;
+    Object.keys(state.remoteStreams).forEach(function(id){ streams[id] = state.remoteStreams[id]; });
+
+    Object.keys(streams).forEach(function(id){
+      var track = streams[id].getAudioTracks()[0] || null;
+      var atual = g.fontes[id];
+      if(atual && atual.track === track) return;
+      if(atual){ try{ atual.node.disconnect(); }catch(e){} delete g.fontes[id]; }
+      if(!track) return;
+      try{
+        var node = g.audioCtx.createMediaStreamSource(new MediaStream([track]));
+        node.connect(g.destino);
+        g.fontes[id] = { node:node, track:track };
+      }catch(e){}
+    });
+
+    Object.keys(g.fontes).forEach(function(id){
+      if(!streams[id]){ try{ g.fontes[id].node.disconnect(); }catch(e){} delete g.fontes[id]; }
+    });
+  }
+
+  function desenharTileNaGravacao(c, tile, x, y, w, h){
+    c.save();
+    c.fillStyle = '#131313';
+    c.fillRect(x, y, w, h);
+    c.beginPath(); c.rect(x, y, w, h); c.clip();
+
+    var video = tile.querySelector('video');
+    var compartilhando = tile.classList.contains('sharing');
+    if(video && video.readyState >= 2 && video.videoWidth){
+      var vw = video.videoWidth, vh = video.videoHeight;
+      var esc = compartilhando ? Math.min(w / vw, h / vh) : Math.max(w / vw, h / vh);
+      var dw = vw * esc, dh = vh * esc;
+      if(compartilhando){ c.fillStyle = '#000'; c.fillRect(x, y, w, h); }
+      c.drawImage(video, x + (w - dw) / 2, y + (h - dh) / 2, dw, dh);
+    } else {
+      var r = Math.min(w, h) * 0.2;
+      var cx = x + w / 2, cy = y + h / 2;
+      var img = tile.querySelector('.tile-avatar img');
+      c.save();
+      c.beginPath(); c.arc(cx, cy, r, 0, Math.PI * 2); c.closePath();
+      if(img && img.complete && img.naturalWidth){
+        c.clip();
+        var ie = Math.max((2 * r) / img.naturalWidth, (2 * r) / img.naturalHeight);
+        var iw = img.naturalWidth * ie, ih = img.naturalHeight * ie;
+        c.drawImage(img, cx - iw / 2, cy - ih / 2, iw, ih);
+      } else {
+        var grad = c.createLinearGradient(cx - r, cy - r, cx + r, cy + r);
+        grad.addColorStop(0, '#1ec8e8'); grad.addColorStop(1, '#1f1f1f');
+        c.fillStyle = grad; c.fill();
+        var av = tile.querySelector('.tile-avatar');
+        c.fillStyle = '#fff';
+        c.font = '700 ' + Math.round(r * 0.7) + 'px "Space Grotesk", system-ui, sans-serif';
+        c.textAlign = 'center'; c.textBaseline = 'middle';
+        c.fillText(av ? av.textContent.trim() : '?', cx, cy);
+      }
+      c.restore();
+    }
+
+    // nome do participante (canto inferior esquerdo), igual ao da tela
+    var labelEl = tile.querySelector('.tile-label');
+    var nome = labelEl ? labelEl.textContent.trim() : '';
+    if(nome){
+      var fs = Math.max(11, Math.min(16, Math.round(h * 0.055)));
+      c.font = '600 ' + fs + 'px "Space Grotesk", system-ui, sans-serif';
+      c.textAlign = 'left'; c.textBaseline = 'middle';
+      var tw = c.measureText(nome).width;
+      var bx = x + 10, bh = fs + 10, by = y + h - bh - 9;
+      c.fillStyle = 'rgba(5,9,18,0.72)';
+      c.fillRect(bx, by, tw + 18, bh);
+      c.fillStyle = '#f5f5f5';
+      c.fillText(nome, bx + 9, by + bh / 2 + 1);
+    }
+
+    c.restore();
+
+    // borda: ciano quando a pessoa está falando
+    c.save();
+    c.lineWidth = tile.classList.contains('speaking') ? 3 : 1;
+    c.strokeStyle = tile.classList.contains('speaking') ? '#4ee8ff' : '#2b2b2b';
+    c.strokeRect(x + 0.5, y + 0.5, w - 1, h - 1);
+    c.restore();
+  }
+
+  function gradeNaGravacao(c, tiles, x, y, w, h, colsFixas){
+    var n = tiles.length;
+    if(!n) return;
+    var esp = 10;
+    var cols = colsFixas || Math.max(1, Math.min(n, Math.round(Math.sqrt(n * (w / h) / (16 / 10)))));
+    var rows = Math.ceil(n / cols);
+    var cw = (w - esp * (cols + 1)) / cols;
+    var ch = (h - esp * (rows + 1)) / rows;
+    tiles.forEach(function(t, i){
+      var lin = Math.floor(i / cols), col = i % cols;
+      desenharTileNaGravacao(c, t, x + esp + col * (cw + esp), y + esp + lin * (ch + esp), cw, ch);
+    });
+  }
+
+  function desenharQuadroGravacao(){
+    var g = state.gravacao;
+    if(!g) return;
+    var c = g.ctx, W = GRAV_LARGURA, H = GRAV_ALTURA;
+    c.fillStyle = '#000';
+    c.fillRect(0, 0, W, H);
+
+    var tiles = Array.prototype.slice.call(el.videoGrid.querySelectorAll('.tile'));
+    var destaque = tiles.filter(function(t){ return t.classList.contains('featured'); });
+    var normais = tiles.filter(function(t){ return !t.classList.contains('featured'); });
+    var rodape = 28;
+
+    if(destaque.length){
+      // tela compartilhada grande à esquerda, demais participantes numa coluna à direita
+      var largDestaque = normais.length ? Math.round(W * 0.78) : W;
+      gradeNaGravacao(c, destaque, 0, 0, largDestaque, H - rodape, 1);
+      if(normais.length) gradeNaGravacao(c, normais, largDestaque - 10, 0, W - largDestaque + 10, H - rodape, 1);
+    } else {
+      gradeNaGravacao(c, normais, 0, 0, W, H - rodape);
+    }
+
+    // rodapé: sala + data/hora
+    var agora = new Date();
+    c.font = '500 12px "JetBrains Mono", monospace';
+    c.textBaseline = 'middle';
+    c.fillStyle = '#6e6e6e';
+    c.textAlign = 'left';
+    c.fillText('DARO CONNECT · SALA #' + (state.salaId || '').toUpperCase(), 14, H - rodape / 2);
+    c.textAlign = 'right';
+    c.fillText(agora.toLocaleDateString('pt-BR') + ' ' + agora.toLocaleTimeString('pt-BR'), W - 14, H - rodape / 2);
+    c.fillStyle = '#ff5c5c';
+    c.textAlign = 'center';
+    c.fillText('● REC ' + formatarDuracao(Date.now() - g.inicio), W / 2, H - rodape / 2);
+  }
+
+  function iniciarGravacao(){
+    if(state.gravacao) return;
+    if(!gravacaoSuportada){
+      addSystemMessage('Seu navegador não suporta gravação — use o Chrome ou o Edge no computador.');
+      return;
+    }
+
+    var canvas = document.createElement('canvas');
+    canvas.width = GRAV_LARGURA; canvas.height = GRAV_ALTURA;
+
+    var g = {
+      canvas:canvas, ctx:canvas.getContext('2d'),
+      audioCtx:null, destino:null, fontes:{},
+      chunks:[], inicio:Date.now(), recorder:null, mime:'',
+      ticker:null, relogio:null, streamCanvas:null
+    };
+
+    try{
+      var AudioCtx = window.AudioContext || window.webkitAudioContext;
+      g.audioCtx = new AudioCtx();
+      g.destino = g.audioCtx.createMediaStreamDestination();
+      if(g.audioCtx.state === 'suspended') g.audioCtx.resume();
+    }catch(e){ g.audioCtx = null; g.destino = null; }
+
+    state.gravacao = g;
+    conectarAudiosNaGravacao();
+    desenharQuadroGravacao();
+
+    g.streamCanvas = canvas.captureStream(GRAV_FPS);
+    var tracks = g.streamCanvas.getVideoTracks().slice();
+    if(g.destino) tracks = tracks.concat(g.destino.stream.getAudioTracks());
+    var combinado = new MediaStream(tracks);
+
+    var mime = escolherFormatoGravacao();
+    try{
+      g.recorder = mime
+        ? new MediaRecorder(combinado, { mimeType:mime, videoBitsPerSecond:2500000, audioBitsPerSecond:128000 })
+        : new MediaRecorder(combinado);
+    }catch(e){
+      state.gravacao = null;
+      limparRecursosGravacao(g);
+      addSystemMessage('Não foi possível iniciar a gravação neste navegador.');
+      return;
+    }
+    g.mime = g.recorder.mimeType || mime || 'video/webm';
+    g.recorder.ondataavailable = function(ev){ if(ev.data && ev.data.size) g.chunks.push(ev.data); };
+    g.recorder.onstop = function(){ salvarArquivoGravacao(g); };
+    g.recorder.start(1000); // salva um pedaço por segundo — se algo travar, não perde tudo
+
+    g.ticker = criarTicker(desenharQuadroGravacao, Math.round(1000 / GRAV_FPS));
+    g.relogio = setInterval(function(){
+      conectarAudiosNaGravacao();
+      atualizarIndicadorGravacao();
+    }, 1000);
+
+    el.btnGravar.classList.add('gravando');
+    el.btnGravar.title = 'Parar gravação';
+    atualizarIndicadorGravacao();
+    anunciarGravacao(true, ' começou a gravar esta reunião.');
+  }
+
+  function pararGravacao(){
+    var g = state.gravacao;
+    if(!g) return;
+    state.gravacao = null;
+    if(g.ticker) g.ticker.parar();
+    if(g.relogio) clearInterval(g.relogio);
+
+    try{
+      if(g.recorder && g.recorder.state !== 'inactive') g.recorder.stop(); // onstop -> salva
+      else salvarArquivoGravacao(g);
+    }catch(e){ salvarArquivoGravacao(g); }
+
+    el.btnGravar.classList.remove('gravando');
+    el.btnGravar.title = 'Gravar reunião';
+    atualizarIndicadorGravacao();
+    anunciarGravacao(false, ' encerrou a gravação.');
+  }
+
+  function limparRecursosGravacao(g){
+    Object.keys(g.fontes).forEach(function(id){ try{ g.fontes[id].node.disconnect(); }catch(e){} });
+    g.fontes = {};
+    if(g.streamCanvas) g.streamCanvas.getTracks().forEach(function(t){ t.stop(); });
+    if(g.audioCtx){ try{ g.audioCtx.close(); }catch(e){} }
+  }
+
+  function salvarArquivoGravacao(g){
+    if(g.salvo) return;
+    g.salvo = true;
+    limparRecursosGravacao(g);
+
+    if(!g.chunks.length){
+      addSystemMessage('A gravação ficou vazia e não foi salva.');
+      return;
+    }
+    var tipo = g.mime.split(';')[0];
+    var blob = new Blob(g.chunks, { type:tipo });
+    var ext = tipo.indexOf('mp4') !== -1 ? 'mp4' : 'webm';
+    var d = new Date(g.inicio);
+    var nome = 'reuniao-' + (state.salaId || 'daro') + '-' +
+      d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2,'0') + '-' + String(d.getDate()).padStart(2,'0') + '-' +
+      String(d.getHours()).padStart(2,'0') + 'h' + String(d.getMinutes()).padStart(2,'0') + '.' + ext;
+
+    var url = URL.createObjectURL(blob);
+    var a = document.createElement('a');
+    a.href = url; a.download = nome; a.style.display = 'none';
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    setTimeout(function(){ URL.revokeObjectURL(url); }, 60000);
+
+    addSystemMessage('Gravação salva: ' + nome + ' (' + (blob.size / 1048576).toFixed(1) + ' MB) — verifique sua pasta de Downloads.');
+  }
+
+  el.btnGravar.addEventListener('click', function(){
+    if(state.gravacao) pararGravacao();
+    else iniciarGravacao();
+  });
+
+  // fechar/recarregar a aba no meio da gravação perderia o arquivo — o navegador pede confirmação
+  window.addEventListener('beforeunload', function(e){
+    if(state.gravacao){
+      e.preventDefault();
+      e.returnValue = '';
+      return '';
+    }
+  });
 
   // ---------- chat panel toggle ----------
   function setChatOpen(open){
@@ -1710,6 +2114,17 @@
   }
 
   function onMensagem(data){
+    // avisos de gravação viajam pelo chat (não precisa mudar o servidor)
+    if(ehAvisoDeGravacao(data.texto)){
+      var iniciou = data.texto.indexOf(MARCA_GRAV_INICIO) === 0;
+      if(data.id !== state.myId){
+        if(iniciou) state.gravandoRemoto[data.id] = data.autor || 'Alguém';
+        else delete state.gravandoRemoto[data.id];
+        atualizarIndicadorGravacao();
+      }
+      addSystemMessage(textoDoAvisoDeGravacao(data.texto));
+      return;
+    }
     var payload = { name:data.autor, own:(data.id === state.myId), text:data.texto };
     if(data.arquivo){
       if(data.arquivo.isImage) payload.imageDataUrl = data.arquivo.dataUrl;
